@@ -19,6 +19,7 @@ kotlin {
     }
     
     listOf(
+        iosX64(),
         iosArm64(),
         iosSimulatorArm64()
     ).forEach { iosTarget ->
@@ -64,15 +65,12 @@ kotlin {
         iosMain.dependencies {
             implementation(libs.ktor.client.darwin)
         }
-        commonTest.dependencies {
-            implementation(libs.kotlin.test)
-        }
     }
 }
 
 android {
     namespace = "com.nas.musicplayer"
-    compileSdk = 35 // 하드코딩하여 Provider 에러 방지
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.nas.musicplayer"
@@ -97,13 +95,57 @@ android {
     }
 }
 
+room {
+    schemaDirectory("$projectDir/schemas")
+}
+
+compose.resources {
+    packageOfResClass = "com.nas.musicplayer"
+}
+
+// iOS 리소스 동기화 시 Xcode 환경변수가 없을 경우 발생하는 오류 해결
+tasks.matching { it.name == "syncComposeResourcesForIos" }.configureEach {
+    val task = this
+    try {
+        // Use reflection to access internal task properties
+        task.javaClass.getMethod("getXcodeTargetArchs").invoke(task)?.let {
+            val p = it as org.gradle.api.provider.ListProperty<*>
+            if (!p.isPresent) {
+                val archs = System.getenv("ARCHS")?.split(" ") ?: if (System.getProperty("os.arch") == "aarch64") listOf("arm64") else listOf("x86_64")
+                @Suppress("UNCHECKED_CAST")
+                (p as org.gradle.api.provider.ListProperty<String>).set(archs)
+            }
+        }
+        task.javaClass.getMethod("getXcodeTargetPlatform").invoke(task)?.let {
+            val p = it as org.gradle.api.provider.Property<*>
+            if (!p.isPresent) {
+                val platform = System.getenv("SDK_NAME") ?: "iphonesimulator"
+                @Suppress("UNCHECKED_CAST")
+                (p as org.gradle.api.provider.Property<String>).set(platform)
+            }
+        }
+        task.javaClass.getMethod("getOutputDir").invoke(task)?.let {
+            val p = it as org.gradle.api.provider.Property<*>
+            if (!p.isPresent) {
+                val buildDir = System.getenv("CONFIGURATION_BUILD_DIR")
+                @Suppress("UNCHECKED_CAST")
+                val dirProp = p as org.gradle.api.provider.Property<org.gradle.api.file.Directory>
+                if (buildDir != null) {
+                    dirProp.set(project.layout.projectDirectory.dir(buildDir))
+                } else {
+                    dirProp.set(project.layout.buildDirectory.dir("compose/iosResources"))
+                }
+            }
+        }
+    } catch (e: Exception) {
+        // Reflection failed
+    }
+}
+
 dependencies {
     debugImplementation(compose.uiTooling)
     add("kspAndroid", libs.androidx.room.compiler)
+    add("kspIosX64", libs.androidx.room.compiler)
     add("kspIosArm64", libs.androidx.room.compiler)
     add("kspIosSimulatorArm64", libs.androidx.room.compiler)
-}
-
-room {
-    schemaDirectory("$projectDir/schemas")
 }
