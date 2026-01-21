@@ -22,13 +22,11 @@ import com.nas.musicplayer.ui.music.*
 @Composable
 fun App(
     musicRepository: MusicRepository,
-    musicPlayerViewModel: MusicPlayerViewModel
+    musicPlayerViewModel: MusicPlayerViewModel,
+    localSongs: List<Song> = emptyList() // 로컬 노래 리스트 추가
 ) {
     val searchViewModel: MusicSearchViewModel = viewModel(
         factory = MusicSearchViewModel.Factory(musicRepository)
-    )
-    val mainViewModel: MainViewModel = viewModel(
-        factory = MainViewModel.Factory()
     )
     
     val navController = rememberNavController()
@@ -40,12 +38,12 @@ fun App(
 
     MaterialTheme {
         Scaffold(
+            contentWindowInsets = WindowInsets(0.dp),
             bottomBar = {
                 if (currentRoute != "player") {
-                    // 고정 높이를 제거하고 스타일로 슬림함을 구현
                     NavigationBar(
                         containerColor = MaterialTheme.colorScheme.surface,
-                        tonalElevation = 0.dp // 그림자와 톤을 제거하여 더 얇아 보이게 함
+                        tonalElevation = 0.dp
                     ) {
                         NavigationBarItem(
                             selected = currentRoute == "search" || currentRoute == null,
@@ -55,7 +53,7 @@ fun App(
                                 }
                             },
                             icon = { Icon(Icons.Default.Search, "Search") },
-                            label = { Text("검색", fontSize = 11.sp) }, // 폰트 크기를 살짝 줄여 여백 확보
+                            label = { Text("검색", fontSize = 11.sp) },
                             alwaysShowLabel = true
                         )
                         NavigationBarItem(
@@ -73,12 +71,11 @@ fun App(
                 }
             }
         ) { innerPadding ->
-            Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+            Box(modifier = Modifier.fillMaxSize().padding(bottom = innerPadding.calculateBottomPadding())) {
                 NavHost(navController = navController, startDestination = "search") {
                     composable("search") {
                         MusicSearchScreen(
                             viewModel = searchViewModel,
-                            mainViewModel = mainViewModel,
                             onSongClick = { song -> 
                                 val currentSongs = searchViewModel.uiState.value.songs
                                 musicPlayerViewModel.playSong(song, currentSongs)
@@ -91,6 +88,7 @@ fun App(
                     }
                     composable("library") {
                         LibraryScreen(
+                            localSongs = localSongs, // 로컬 노래 전달
                             onSongClick = { song, list ->
                                 musicPlayerViewModel.playSong(song, list)
                                 navController.navigate("player")

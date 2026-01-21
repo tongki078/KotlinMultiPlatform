@@ -20,12 +20,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -41,12 +39,9 @@ fun MusicSearchScreen(
     onNavigateToAlbum: (Album) -> Unit,
     onSongClick: (Song) -> Unit,
     onNavigateToPlaylists: () -> Unit,
-    viewModel: MusicSearchViewModel,
-    mainViewModel: MainViewModel
+    viewModel: MusicSearchViewModel
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val aiResult by mainViewModel.outputText.collectAsState()
-    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
     val listState = rememberLazyListState()
     val focusManager = LocalFocusManager.current
     
@@ -58,135 +53,96 @@ fun MusicSearchScreen(
 
     val primaryColor = MaterialTheme.colorScheme.primary
 
-    Scaffold(
-        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-        topBar = {
-            TopAppBar(
-                title = { 
-                    Text("검색", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp)
-                },
-                actions = {
-                    IconButton(onClick = onNavigateToPlaylists) {
-                        Icon(Icons.AutoMirrored.Filled.PlaylistPlay, null, modifier = Modifier.size(32.dp), tint = primaryColor)
-                    }
-                },
-                scrollBehavior = scrollBehavior
-            )
-        }
-    ) { paddingValues ->
-        Column(
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+    ) {
+        // 상단 헤더: 검색창과 플레이리스트 버튼 통합
+        Row(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                TextField(
-                    value = uiState.searchQuery,
-                    onValueChange = { viewModel.onSearchQueryChanged(it) },
-                    placeholder = { Text("아티스트, 노래, 앨범 등") },
-                    leadingIcon = { Icon(Icons.Default.Search, null) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .onFocusChanged { isSearchFocused = it.isFocused },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = {
-                        viewModel.performSearch()
-                        focusManager.clearFocus()
-                        isSearchFocused = false
-                    }),
-                    colors = TextFieldDefaults.colors(
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent,
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    )
+            TextField(
+                value = uiState.searchQuery,
+                onValueChange = { viewModel.onSearchQueryChanged(it) },
+                placeholder = { Text("아티스트, 노래, 앨범 등") },
+                leadingIcon = { Icon(Icons.Default.Search, null) },
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .onFocusChanged { isSearchFocused = it.isFocused },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = {
+                    viewModel.performSearch()
+                    focusManager.clearFocus()
+                    isSearchFocused = false
+                }),
+                colors = TextFieldDefaults.colors(
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                )
+            )
+            
+            IconButton(onClick = onNavigateToPlaylists) {
+                Icon(
+                    Icons.AutoMirrored.Filled.PlaylistPlay, 
+                    null, 
+                    modifier = Modifier.size(32.dp), 
+                    tint = primaryColor
                 )
             }
-            
-            if (uiState.searchQuery.isEmpty() && !isSearchFocused) {
-                Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("AI 추천", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Button(onClick = {
-                            mainViewModel.generateText("활동적인 분위기에 어울리는 최신 팝송 3곡만 추천해줘. 각 추천은 '가수 - 제목' 형식으로 한 줄씩 표시해줘.")
-                        }) {
-                            Text("추천 받기")
+        }
+        
+        Box(modifier = Modifier.weight(1f)) {
+            LazyColumn(
+                state = listState,
+                contentPadding = PaddingValues(bottom = 16.dp, top = 8.dp),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                items(uiState.songs, key = { it.id }) { song ->
+                    SongListItem(
+                        song = song,
+                        onItemClick = { onSongClick(song) },
+                        onMoreClick = {
+                            selectedSongForSheet = song
+                            scope.launch { sheetState.show() }
                         }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    if (aiResult.isNotBlank()) {
-                        val recommendations = aiResult.lines().filter { it.isNotBlank() }
-                        recommendations.forEach { recommendation ->
-                            Text(
-                                text = "🎵 $recommendation",
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        viewModel.onSearchQueryChanged(recommendation)
-                                        viewModel.performSearch()
-                                        focusManager.clearFocus()
-                                        isSearchFocused = false
-                                    }
-                                    .padding(vertical = 8.dp),
-                                style = MaterialTheme.typography.bodyLarge
-                            )
-                        }
-                    }
-                    HorizontalDivider(modifier = Modifier.padding(top = 16.dp))
+                    )
                 }
             }
 
-            Box(modifier = Modifier.fillMaxSize()) {
-                LazyColumn(
-                    state = listState,
-                    contentPadding = PaddingValues(bottom = 120.dp),
-                    modifier = Modifier.fillMaxSize()
+            // 최근 검색어 뷰
+            if (isSearchFocused && uiState.searchQuery.isEmpty() && uiState.recentSearches.isNotEmpty()) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
                 ) {
-                    items(uiState.songs, key = { it.id }) { song ->
-                        SongListItem(
-                            song = song,
-                            onItemClick = { onSongClick(song) },
-                            onMoreClick = {
-                                selectedSongForSheet = song
-                                scope.launch { sheetState.show() }
-                            }
-                        )
-                    }
+                    RecentSearchesView(
+                        recentSearches = uiState.recentSearches,
+                        onSearchClick = { 
+                            viewModel.performSearch(it)
+                            focusManager.clearFocus()
+                            isSearchFocused = false
+                        },
+                        onDeleteClick = { viewModel.deleteRecentSearch(it) },
+                        onClearAll = { viewModel.clearAllRecentSearches() }
+                    )
                 }
+            }
 
-                if (isSearchFocused && uiState.searchQuery.isEmpty() && uiState.recentSearches.isNotEmpty()) {
-                    Surface(
-                        modifier = Modifier.fillMaxSize(),
-                        color = MaterialTheme.colorScheme.background
-                    ) {
-                        RecentSearchesView(
-                            recentSearches = uiState.recentSearches,
-                            onSearchClick = { 
-                                viewModel.performSearch(it)
-                                focusManager.clearFocus()
-                                isSearchFocused = false
-                            },
-                            onDeleteClick = { viewModel.deleteRecentSearch(it) },
-                            onClearAll = { viewModel.clearAllRecentSearches() }
-                        )
-                    }
-                }
-
-                if (uiState.isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-                }
+            if (uiState.isLoading) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
             }
         }
     }
 
+    // 더보기 시트
     if (selectedSongForSheet != null) {
         ModalBottomSheet(
             onDismissRequest = { selectedSongForSheet = null },

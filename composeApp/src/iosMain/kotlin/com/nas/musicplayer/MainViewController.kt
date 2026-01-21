@@ -13,9 +13,13 @@ fun MainViewController() = ComposeUIViewController {
     val controller = remember { MusicPlayerController() }
     val viewModel = remember { MusicPlayerViewModel(controller, repository) }
 
-    // 3. 공통 App 호출 (인자 필수 전달)
+    // 3. iOS 로컬 노래 로드
+    val localSongs = remember { LocalMusicLoader.loadLocalMusic() }
+
+    // 4. 공통 App 호출
     App(
         musicRepository = repository,
-        musicPlayerViewModel = viewModel
+        musicPlayerViewModel = viewModel,
+        localSongs = localSongs
     )
 }

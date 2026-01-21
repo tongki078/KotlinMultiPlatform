@@ -2,6 +2,7 @@ package com.nas.musicplayer
 
 import android.content.Context
 import android.media.audiofx.LoudnessEnhancer
+import android.net.Uri
 import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
+import java.io.File
 
 actual class MusicPlayerController(context: Context) {
 
@@ -54,6 +56,7 @@ actual class MusicPlayerController(context: Context) {
             .build()
 
         val httpDataSourceFactory = OkHttpDataSource.Factory(OkHttpClient())
+        // DefaultDataSource는 파일(file://)과 HTTP를 모두 지원합니다.
         val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
 
         exoPlayer = ExoPlayer.Builder(context)
@@ -92,7 +95,8 @@ actual class MusicPlayerController(context: Context) {
         try {
             loudnessEnhancer?.release()
             loudnessEnhancer = LoudnessEnhancer(sessionId).apply {
-                setTargetGain(1500)
+                // targetGain을 1500에서 3000으로 높여 소리를 더 증폭시킵니다.
+                setTargetGain(3000) 
                 enabled = true
             }
         } catch (e: Exception) {
@@ -107,14 +111,23 @@ actual class MusicPlayerController(context: Context) {
         _currentPlaylist.value = playlist
         _currentIndex.value = startIndex
         _currentSong.value = song
+        
         exoPlayer?.let { player ->
             player.stop()
             player.clearMediaItems()
+            
             playlist.forEach { s ->
-                s.streamUrl?.let { url ->
-                    player.addMediaItem(MediaItem.fromUri(url))
+                val uriString = s.streamUrl ?: ""
+                val uri = if (uriString.startsWith("/") || uriString.startsWith("content://")) {
+                    // 로컬 파일 경로인 경우
+                    Uri.fromFile(File(uriString))
+                } else {
+                    // 네트워크 URL인 경우
+                    Uri.parse(uriString)
                 }
+                player.addMediaItem(MediaItem.fromUri(uri))
             }
+
             player.prepare()
             player.seekTo(startIndex, 0L)
             player.play()
