@@ -2,6 +2,9 @@ package com.nas.musicplayer
 
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.Foundation.*
+import platform.AVFoundation.*
+import platform.CoreGraphics.*
+import platform.UIKit.*
 import com.nas.musicplayer.Song
 
 object LocalMusicLoader {
@@ -10,12 +13,17 @@ object LocalMusicLoader {
         val songList = mutableListOf<Song>()
         val fileManager = NSFileManager.defaultManager
         
-        // App의 Documents 디렉토리 경로 가져오기
         val documentsPath = NSSearchPathForDirectoriesInDomains(
             NSDocumentDirectory,
             NSUserDomainMask,
             true
         ).firstOrNull() as? String ?: return emptyList()
+
+        val cachePath = NSSearchPathForDirectoriesInDomains(
+            NSCachesDirectory,
+            NSUserDomainMask,
+            true
+        ).firstOrNull() as? String
 
         try {
             val files = fileManager.contentsOfDirectoryAtPath(documentsPath, null)
@@ -25,7 +33,27 @@ object LocalMusicLoader {
             }?.forEach { 
                 val fileName = it as String
                 val fullPath = "$documentsPath/$fileName"
+                val url = NSURL.fileURLWithPath(fullPath)
                 
+                val asset = AVAsset.assetWithURL(url)
+                var artworkPath: String? = null
+                
+                // Extract artwork
+                val artworkItem = asset.commonMetadata.filter { item ->
+                    val metadataItem = item as AVMetadataItem
+                    metadataItem.commonKey() == AVMetadataCommonKeyArtwork
+                }.firstOrNull() as? AVMetadataItem
+
+                if (artworkItem != null && cachePath != null) {
+                    val data = artworkItem.value() as? NSData
+                    if (data != null) {
+                        val artFileName = "art_${fileName.hashCode()}.jpg"
+                        val artFullPath = "$cachePath/$artFileName"
+                        data.writeToFile(artFullPath, true)
+                        artworkPath = artFullPath
+                    }
+                }
+
                 songList.add(
                     Song(
                         id = fileName.hashCode().toLong(),
@@ -33,7 +61,8 @@ object LocalMusicLoader {
                         artist = "Local Device",
                         albumName = "Documents",
                         streamUrl = fullPath,
-                        isDir = false
+                        isDir = false,
+                        metaPoster = artworkPath
                     )
                 )
             }

@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import platform.AVFoundation.*
+import platform.AVFAudio.*
 import platform.CoreMedia.*
 import platform.Foundation.NSURL
 import platform.darwin.NSObject
@@ -38,7 +39,22 @@ actual class MusicPlayerController {
     @OptIn(ExperimentalForeignApi::class)
     actual fun playSong(song: Song, playlist: List<Song>) {
         val urlString = song.streamUrl ?: return
-        val url = NSURL.URLWithString(urlString) ?: return
+        
+        // URL 처리 보완: 로컬 파일 경로와 네트워크 URL 구분
+        val url = if (urlString.startsWith("/")) {
+            NSURL.fileURLWithPath(urlString)
+        } else {
+            NSURL.URLWithString(urlString)
+        } ?: return
+
+        // Audio Session 설정 (소리 재생 권한 활성화)
+        try {
+            val session = AVAudioSession.sharedInstance()
+            session.setCategory(AVAudioSessionCategoryPlayback, error = null)
+            session.setActive(true, error = null)
+        } catch (e: Exception) {
+            println("iOS AVAudioSession Error: ${e.message}")
+        }
         
         removeTimeObserver()
         player?.pause()
@@ -47,6 +63,7 @@ actual class MusicPlayerController {
         _currentPlaylist.value = playlist
         _currentIndex.value = playlist.indexOf(song).coerceAtLeast(0)
 
+        // AVPlayer 인스턴스 생성 및 재생
         player = AVPlayer(url)
         player?.play()
         _isPlaying.value = true
