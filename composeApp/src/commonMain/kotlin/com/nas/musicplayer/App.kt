@@ -23,7 +23,7 @@ import com.nas.musicplayer.ui.music.*
 fun App(
     musicRepository: MusicRepository,
     musicPlayerViewModel: MusicPlayerViewModel,
-    localSongs: List<Song> = emptyList() // 로컬 노래 리스트 추가
+    localSongs: List<Song> = emptyList()
 ) {
     val searchViewModel: MusicSearchViewModel = viewModel(
         factory = MusicSearchViewModel.Factory(musicRepository)
@@ -38,40 +38,73 @@ fun App(
 
     MaterialTheme {
         Scaffold(
-            contentWindowInsets = WindowInsets(0.dp),
             bottomBar = {
                 if (currentRoute != "player") {
-                    NavigationBar(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        tonalElevation = 0.dp
-                    ) {
-                        NavigationBarItem(
-                            selected = currentRoute == "search" || currentRoute == null,
-                            onClick = { 
-                                navController.navigate("search") {
-                                    popUpTo("search") { inclusive = true }
-                                }
-                            },
-                            icon = { Icon(Icons.Default.Search, "Search") },
-                            label = { Text("검색", fontSize = 11.sp) },
-                            alwaysShowLabel = true
+                    Column {
+                        HorizontalDivider(
+                            thickness = 0.5.dp, 
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
                         )
-                        NavigationBarItem(
-                            selected = currentRoute == "library" || currentRoute == "playlists",
-                            onClick = { 
-                                navController.navigate("library") {
-                                    popUpTo("search")
-                                }
-                            },
-                            icon = { Icon(Icons.Default.LibraryMusic, "Library") },
-                            label = { Text("보관함", fontSize = 11.sp) },
-                            alwaysShowLabel = true
-                        )
+                        NavigationBar(
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            tonalElevation = 0.dp,
+                            // 상하 여백을 대칭으로 만들기 위해 높이를 확보하고 인셋을 명시적으로 제어
+                            modifier = Modifier.height(80.dp),
+                            // 위아래 여백을 동일하게 가져가기 위해 내부 인셋을 비우고 정중앙 배치를 유도
+                            windowInsets = WindowInsets(0.dp) 
+                        ) {
+                            NavigationBarItem(
+                                selected = currentRoute == "search" || currentRoute == null,
+                                onClick = { 
+                                    navController.navigate("search") {
+                                        popUpTo("search") { inclusive = true }
+                                    }
+                                },
+                                icon = { 
+                                    Icon(
+                                        imageVector = Icons.Default.Search, 
+                                        contentDescription = "Search",
+                                        modifier = Modifier.size(26.dp) // 아이콘 크기 최적화
+                                    ) 
+                                },
+                                label = { Text("검색", fontSize = 12.sp) },
+                                alwaysShowLabel = true
+                            )
+                            NavigationBarItem(
+                                selected = currentRoute == "library" || currentRoute == "playlists",
+                                onClick = { 
+                                    navController.navigate("library") {
+                                        popUpTo("search")
+                                    }
+                                },
+                                icon = { 
+                                    Icon(
+                                        imageVector = Icons.Default.LibraryMusic, 
+                                        contentDescription = "Library",
+                                        modifier = Modifier.size(26.dp)
+                                    ) 
+                                },
+                                label = { Text("보관함", fontSize = 12.sp) },
+                                alwaysShowLabel = true
+                            )
+                        }
                     }
                 }
             }
         ) { innerPadding ->
-            Box(modifier = Modifier.fillMaxSize().padding(bottom = innerPadding.calculateBottomPadding())) {
+            // 하단 탭 + 시스템 네비게이션 바 영역을 포함한 하단 패딩 적용
+            // NavigationBar의 높이가 80dp이므로 그에 맞춰 본문 영역 확보
+            val bottomPadding = if (currentRoute != "player") {
+                innerPadding.calculateBottomPadding().coerceAtLeast(80.dp)
+            } else {
+                0.dp
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = bottomPadding)
+            ) {
                 NavHost(navController = navController, startDestination = "search") {
                     composable("search") {
                         MusicSearchScreen(
@@ -88,7 +121,7 @@ fun App(
                     }
                     composable("library") {
                         LibraryScreen(
-                            localSongs = localSongs, // 로컬 노래 전달
+                            localSongs = localSongs,
                             onSongClick = { song, list ->
                                 musicPlayerViewModel.playSong(song, list)
                                 navController.navigate("player")
@@ -139,6 +172,7 @@ fun App(
                         modifier = Modifier
                             .fillMaxWidth()
                             .align(Alignment.BottomCenter)
+                            .padding(bottom = 4.dp)
                     ) {
                         MiniPlayer(
                             song = currentSong!!,

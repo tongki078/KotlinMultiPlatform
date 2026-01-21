@@ -56,13 +56,15 @@ actual class MusicPlayerController(context: Context) {
             .build()
 
         val httpDataSourceFactory = OkHttpDataSource.Factory(OkHttpClient())
-        // DefaultDataSource는 파일(file://)과 HTTP를 모두 지원합니다.
         val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
 
         exoPlayer = ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
             .setAudioAttributes(audioAttributes, true)
             .build()
+
+        // 기기 자체 소리가 작을 수 있으므로 플레이어 볼륨을 항상 최대로 유지
+        exoPlayer?.volume = 1.0f
 
         exoPlayer?.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlayingValue: Boolean) {
@@ -95,8 +97,8 @@ actual class MusicPlayerController(context: Context) {
         try {
             loudnessEnhancer?.release()
             loudnessEnhancer = LoudnessEnhancer(sessionId).apply {
-                // targetGain을 1500에서 3000으로 높여 소리를 더 증폭시킵니다.
-                setTargetGain(3000) 
+                // targetGain을 5000으로 높여 소리를 매우 강력하게 증폭시킵니다 (기본값 대비 약 2~3배)
+                setTargetGain(5000)
                 enabled = true
             }
         } catch (e: Exception) {
@@ -119,10 +121,8 @@ actual class MusicPlayerController(context: Context) {
             playlist.forEach { s ->
                 val uriString = s.streamUrl ?: ""
                 val uri = if (uriString.startsWith("/") || uriString.startsWith("content://")) {
-                    // 로컬 파일 경로인 경우
                     Uri.fromFile(File(uriString))
                 } else {
-                    // 네트워크 URL인 경우
                     Uri.parse(uriString)
                 }
                 player.addMediaItem(MediaItem.fromUri(uri))

@@ -8,12 +8,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import platform.AVFoundation.*
 import platform.AVFAudio.*
 import platform.CoreMedia.*
-import platform.Foundation.NSURL
+import platform.Foundation.*
 import platform.darwin.NSObject
 
 actual class MusicPlayerController {
     private var player: AVPlayer? = null
     private var timeObserver: Any? = null
+    private var playerItemEndOfTimeObserver: Any? = null
 
     private val _currentSong = MutableStateFlow<Song?>(null)
     actual val currentSong: StateFlow<Song?> = _currentSong.asStateFlow()
@@ -39,15 +40,30 @@ actual class MusicPlayerController {
     @OptIn(ExperimentalForeignApi::class)
     actual fun playSong(song: Song, playlist: List<Song>) {
         val urlString = song.streamUrl ?: return
+        println("iOS Player: Playing ${song.name}")
         
-        // URL 처리 보완: 로컬 파일 경로와 네트워크 URL 구분
-        val url = if (urlString.startsWith("/")) {
-            NSURL.fileURLWithPath(urlString)
+        // 1. URL 처리: SSL 오류 우회를 위해 HTTP 전환 및 공백 인코딩
+        var targetUrl = if (urlString.contains("music.yommi.mywire.org")) {
+            urlString.replace("https://", "http://")
         } else {
-            NSURL.URLWithString(urlString)
-        } ?: return
+            urlString
+        }
+        
+        // Base64 내부의 공백 등 특수문자 처리
+        targetUrl = targetUrl.replace(" ", "%20")
 
-        // Audio Session 설정 (소리 재생 권한 활성화)
+        // 2. AAC 포맷 힌트 추가 (Fragment 방식)
+        if (targetUrl.startsWith("http") && !targetUrl.contains("#")) {
+            targetUrl += "#.aac"
+        }
+
+        val url = NSURL.URLWithString(targetUrl)
+        if (url == null) {
+            println("iOS Player Error: NSURL creation failed for $targetUrl")
+            return
+        }
+
+        // 3. 오디오 세션 활성화
         try {
             val session = AVAudioSession.sharedInstance()
             session.setCategory(AVAudioSessionCategoryPlayback, error = null)
@@ -57,14 +73,31 @@ actual class MusicPlayerController {
         }
         
         removeTimeObserver()
+        removeEndOfTimeObserver()
         player?.pause()
+        
+        // 4. AVPlayerItem 및 플레이어 생성
+        val playerItem = AVPlayerItem.playerItemWithURL(url)
+        playerItem.preferredForwardBufferDuration = 5.0
+        
+        // 다음 곡 자동 재생을 위한 옵저버 등록
+        playerItemEndOfTimeObserver = NSNotificationCenter.defaultCenter.addObserverForName(
+            name = AVPlayerItemDidPlayToEndTimeNotification,
+            `object` = playerItem,
+            queue = NSOperationQueue.mainQueue,
+            usingBlock = { _ ->
+                playNext()
+            }
+        )
+        
+        player = AVPlayer.playerWithPlayerItem(playerItem)
+        player?.automaticallyWaitsToMinimizeStalling = true
+        player?.volume = _volume.value
 
         _currentSong.value = song
         _currentPlaylist.value = playlist
-        _currentIndex.value = playlist.indexOf(song).coerceAtLeast(0)
+        _currentIndex.value = playlist.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
 
-        // AVPlayer 인스턴스 생성 및 재생
-        player = AVPlayer(url)
         player?.play()
         _isPlaying.value = true
         
@@ -104,10 +137,20 @@ actual class MusicPlayerController {
         }
     }
 
+    private fun removeEndOfTimeObserver() {
+        playerItemEndOfTimeObserver?.let {
+            NSNotificationCenter.defaultCenter.removeObserver(it)
+            playerItemEndOfTimeObserver = null
+        }
+    }
+
     actual fun playNext() {
         val nextIndex = _currentIndex.value + 1
         if (nextIndex < _currentPlaylist.value.size) {
             playSong(_currentPlaylist.value[nextIndex], _currentPlaylist.value)
+        } else {
+            // 리스트의 마지막 곡이면 중지하거나 처음으로 돌아갈 수 있음
+            _isPlaying.value = false
         }
     }
 
