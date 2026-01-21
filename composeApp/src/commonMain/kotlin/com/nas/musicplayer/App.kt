@@ -9,6 +9,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -23,7 +24,6 @@ fun App(
     musicRepository: MusicRepository,
     musicPlayerViewModel: MusicPlayerViewModel
 ) {
-    // 팩토리를 직접 전달하는 방식으로 변경하여 호환성 높임
     val searchViewModel: MusicSearchViewModel = viewModel(
         factory = MusicSearchViewModel.Factory(musicRepository)
     )
@@ -42,7 +42,11 @@ fun App(
         Scaffold(
             bottomBar = {
                 if (currentRoute != "player") {
-                    NavigationBar {
+                    // 고정 높이를 제거하고 스타일로 슬림함을 구현
+                    NavigationBar(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        tonalElevation = 0.dp // 그림자와 톤을 제거하여 더 얇아 보이게 함
+                    ) {
                         NavigationBarItem(
                             selected = currentRoute == "search" || currentRoute == null,
                             onClick = { 
@@ -51,7 +55,8 @@ fun App(
                                 }
                             },
                             icon = { Icon(Icons.Default.Search, "Search") },
-                            label = { Text("검색") }
+                            label = { Text("검색", fontSize = 11.sp) }, // 폰트 크기를 살짝 줄여 여백 확보
+                            alwaysShowLabel = true
                         )
                         NavigationBarItem(
                             selected = currentRoute == "library" || currentRoute == "playlists",
@@ -61,7 +66,8 @@ fun App(
                                 }
                             },
                             icon = { Icon(Icons.Default.LibraryMusic, "Library") },
-                            label = { Text("보관함") }
+                            label = { Text("보관함", fontSize = 11.sp) },
+                            alwaysShowLabel = true
                         )
                     }
                 }
@@ -135,7 +141,6 @@ fun App(
                         modifier = Modifier
                             .fillMaxWidth()
                             .align(Alignment.BottomCenter)
-                            .padding(bottom = 8.dp)
                     ) {
                         MiniPlayer(
                             song = currentSong!!,
