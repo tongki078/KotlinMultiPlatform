@@ -99,7 +99,9 @@ actual class MusicPlayerController(private val context: Context) {
             loudnessEnhancer?.release()
             if (sessionId != 0) {
                 loudnessEnhancer = LoudnessEnhancer(sessionId).apply {
-                    setTargetGain(10000) 
+                    // 소리 증폭 값을 대폭 상향 (10000 -> 30000: 30dB 증폭)
+                    // 에뮬레이터의 작은 소리를 확실하게 보강합니다.
+                    setTargetGain(30000)
                     enabled = true
                 }
             }

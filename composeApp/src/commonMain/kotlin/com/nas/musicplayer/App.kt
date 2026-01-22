@@ -57,7 +57,6 @@ fun App(
 
     MaterialTheme {
         Scaffold(
-            // Scaffold가 시스템 바를 위해 확보하는 자동 여백 사용 (잘림 방지)
             bottomBar = {
                 if (currentRoute != "player") {
                     Column {
@@ -67,8 +66,9 @@ fun App(
                         )
                         NavigationBar(
                             containerColor = MaterialTheme.colorScheme.surface,
-                            tonalElevation = 0.dp
-                            // windowInsets 설정을 기본값으로 두어 시스템 내비게이션 바 영역을 자동 확보
+                            tonalElevation = 0.dp,
+                            // 시스템 바 여백을 제거하여 아이콘을 더 아래로 배치 (잘림 방지 위해 높이는 유지)
+                            windowInsets = WindowInsets(0, 0, 0, 0)
                         ) {
                             NavigationBarItem(
                                 selected = currentRoute == "search" || currentRoute == null,
@@ -105,7 +105,7 @@ fun App(
                 }
             }
         ) { innerPadding ->
-            // 시스템 바를 포함한 정확한 하단 여백 적용
+            // NavigationBar의 windowInsets를 제거했으므로 padding 계산 시에도 이를 고려
             val bottomPadding = innerPadding.calculateBottomPadding()
             val totalBottomPadding = if (currentRoute != "player" && currentSong != null) {
                 bottomPadding + miniPlayerHeight
@@ -190,7 +190,7 @@ fun App(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(bottom = bottomPadding) // 하단 탭 바로 위에 밀착
+                        .padding(bottom = bottomPadding)
                 ) {
                     Box(
                         modifier = Modifier

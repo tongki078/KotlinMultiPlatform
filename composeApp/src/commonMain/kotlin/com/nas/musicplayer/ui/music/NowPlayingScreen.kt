@@ -83,7 +83,7 @@ fun NowPlayingScreen(
         }
     }
 
-    // 앨범 아트 스케일 (부드러운 애니메이션 효과)
+    // 앨범 아트 스케일
     val albumArtScale by animateFloatAsState(targetValue = if (isPlaying) 1f else 0.92f, label = "albumArtScale")
 
     Box(
@@ -131,12 +131,12 @@ fun NowPlayingScreen(
                 }
             }
 
-            // 2. Center Content (가중치 복구 및 세로 제약 조건 강화)
+            // 2. Center Content
             Box(
                 modifier = Modifier
-                    .weight(1f) // 가중치를 1f로 복구하여 상하단 공간 확보
+                    .weight(1f)
                     .fillMaxWidth()
-                    .clipToBounds(), // 할당된 영역 밖으로 나가지 않도록 제한
+                    .clipToBounds(),
                 contentAlignment = Alignment.Center
             ) {
                 AnimatedContent(
@@ -160,8 +160,8 @@ fun NowPlayingScreen(
                         HorizontalPager(
                             state = pagerState,
                             modifier = Modifier
-                                .fillMaxWidth(0.75f) // 너비 비율 75%로 최적화
-                                .aspectRatio(1f, matchHeightConstraintsFirst = true) // 화면이 짧으면 높이에 맞춰 축소
+                                .fillMaxWidth(0.75f)
+                                .aspectRatio(1f, matchHeightConstraintsFirst = true)
                                 .clickable { isLyricsMode = true },
                             contentPadding = PaddingValues(0.dp),
                             pageSpacing = 0.dp
@@ -181,7 +181,7 @@ fun NowPlayingScreen(
                 }
             }
 
-            // 3. Info & Controls Section (간격 최적화)
+            // 3. Info & Controls Section
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -201,13 +201,13 @@ fun NowPlayingScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = song?.name ?: "알 수 없는 제목",
-                                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, fontSize = 22.sp, color = Color.White),
+                                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, fontSize = 24.sp, color = Color.White),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
                                     text = song?.artist ?: "Unknown Artist",
-                                    style = MaterialTheme.typography.bodyLarge.copy(color = Color.White.copy(alpha = 0.7f), fontSize = 16.sp),
+                                    style = MaterialTheme.typography.bodyLarge.copy(color = Color.White.copy(alpha = 0.7f), fontSize = 18.sp),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -317,7 +317,7 @@ fun NowPlayingScreen(
     }
 }
 
-data class LyricsLine(val timeMs: Long, val text: String)
+data class LyricsLine(val timeMs: Long, val text: String, val isSynced: Boolean = true)
 
 @Composable
 fun LyricsView(song: Song?, currentPosition: Long) {
@@ -333,7 +333,8 @@ fun LyricsView(song: Song?, currentPosition: Long) {
 
     val activeLineIndex = remember(adjustedPosition, parsedLyrics) {
         if (parsedLyrics.isEmpty()) return@remember -1
-        val index = parsedLyrics.indexOfLast { it.timeMs <= adjustedPosition }
+        // 실제 싱크 정보가 있는 가사들 중에서만 현재 위치를 찾음 (점프 현상 방지)
+        val index = parsedLyrics.indexOfLast { it.isSynced && it.timeMs <= adjustedPosition }
         if (index == -1) 0 else index
     }
 
@@ -362,7 +363,7 @@ fun LyricsView(song: Song?, currentPosition: Long) {
                 contentPadding = PaddingValues(
                     top = maxHeight / 4,
                     bottom = maxHeight / 2,
-                    start = 20.dp, // 좌우 여백 추가
+                    start = 20.dp,
                     end = 20.dp
                 )
             ) {
@@ -402,21 +403,38 @@ private fun parseLrc(lrcContent: String?): List<LyricsLine> {
     if (lrcContent == null) return emptyList()
     
     val lines = mutableListOf<LyricsLine>()
-    val regex = Regex("\\[(\\d+):(\\d+)\\.(\\d+)\\](.*)")
+    val timestampRegex = Regex("\\[(\\d+):(\\d+)(?:[.:](\\d+))?\\]")
     
-    lrcContent.lines().forEach { line ->
-        val match = regex.find(line)
-        if (match != null) {
-            val min = match.groupValues[1].toLong()
-            val sec = match.groupValues[2].toLong()
-            val msPart = match.groupValues[3]
-            val text = match.groupValues[4].trim()
-            
-            val ms = if (msPart.length == 2) msPart.toLong() * 10 else msPart.toLong()
-            val timeMs = (min * 60 * 1000) + (sec * 1000) + ms
-            
+    var lastKnownTimeMs = 0L
+    
+    lrcContent.split(Regex("\\r?\\n")).forEach { line ->
+        val timestampMatches = timestampRegex.findAll(line).toList()
+        
+        if (timestampMatches.isNotEmpty()) {
+            val text = line.replace(timestampRegex, "").trim()
             if (text.isNotEmpty()) {
-                lines.add(LyricsLine(timeMs, text))
+                timestampMatches.forEach { match ->
+                    val min = match.groupValues[1].toLongOrNull() ?: 0L
+                    val sec = match.groupValues[2].toLongOrNull() ?: 0L
+                    val msPart = match.groupValues.getOrNull(3) ?: ""
+                    
+                    val ms = when (msPart.length) {
+                        1 -> msPart.toLongOrNull()?.let { it * 100 } ?: 0L
+                        2 -> msPart.toLongOrNull()?.let { it * 10 } ?: 0L
+                        3 -> msPart.toLongOrNull() ?: 0L
+                        else -> 0L
+                    }
+                    
+                    val timeMs = (min * 60 * 1000) + (sec * 1000) + ms
+                    lines.add(LyricsLine(timeMs, text, isSynced = true))
+                    lastKnownTimeMs = timeMs
+                }
+            }
+        } else {
+            val text = line.trim()
+            if (text.isNotEmpty() && !text.startsWith("[")) { // 메타데이터 제외
+                lastKnownTimeMs += 1 
+                lines.add(LyricsLine(lastKnownTimeMs, text, isSynced = false))
             }
         }
     }

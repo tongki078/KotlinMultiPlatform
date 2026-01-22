@@ -86,7 +86,7 @@ fun MusicSearchScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
+                .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 0.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             TextField(
@@ -137,10 +137,16 @@ fun MusicSearchScreen(
             }
         }
         
-        Box(modifier = Modifier.weight(1f)) {
+        // 리스트 영역 자체에 상하단 마진을 동일하게 부여하여 대칭 확보
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .padding(top = 8.dp, bottom = 8.dp) 
+        ) {
             LazyColumn(
                 state = listState,
-                contentPadding = PaddingValues(bottom = 16.dp, top = 8.dp),
+                // 내부 패딩은 제거하여 마진에 의해서만 외부 간격이 결정되도록 함
+                contentPadding = PaddingValues(0.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
                 items(uiState.songs, key = { it.id }) { song ->
