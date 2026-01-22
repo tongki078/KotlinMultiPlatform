@@ -9,12 +9,20 @@ import platform.AVFoundation.*
 import platform.AVFAudio.*
 import platform.CoreMedia.*
 import platform.Foundation.*
+import platform.MediaPlayer.*
+import platform.UIKit.*
 import platform.darwin.NSObject
 
+@OptIn(ExperimentalForeignApi::class)
 actual class MusicPlayerController {
     private var player: AVPlayer? = null
     private var timeObserver: Any? = null
     private var playerItemEndOfTimeObserver: Any? = null
+    private val mainScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    
+    // 현재 곡의 아트워크 캐시
+    private var cachedArtwork: MPMediaItemArtwork? = null
+    private var currentArtworkUrl: String? = null
 
     private val _currentSong = MutableStateFlow<Song?>(null)
     actual val currentSong: StateFlow<Song?> = _currentSong.asStateFlow()
@@ -37,60 +45,59 @@ actual class MusicPlayerController {
     private val _volume = MutableStateFlow(1.0f)
     actual val volume: StateFlow<Float> = _volume.asStateFlow()
 
-    @OptIn(ExperimentalForeignApi::class)
-    actual fun playSong(song: Song, playlist: List<Song>) {
-        val urlString = song.streamUrl ?: return
-        println("iOS Player: Playing ${song.name}")
-        
-        // 1. URL 처리: SSL 오류 우회를 위해 HTTP 전환 및 공백 인코딩
-        var targetUrl = if (urlString.contains("music.yommi.mywire.org")) {
-            urlString.replace("https://", "http://")
-        } else {
-            urlString
-        }
-        
-        // Base64 내부의 공백 등 특수문자 처리
-        targetUrl = targetUrl.replace(" ", "%20")
+    init {
+        setupAudioSession()
+        setupRemoteCommandCenter()
+    }
 
-        // 2. AAC 포맷 힌트 추가 (Fragment 방식)
-        if (targetUrl.startsWith("http") && !targetUrl.contains("#")) {
-            targetUrl += "#.aac"
-        }
-
-        val url = NSURL.URLWithString(targetUrl)
-        if (url == null) {
-            println("iOS Player Error: NSURL creation failed for $targetUrl")
-            return
-        }
-
-        // 3. 오디오 세션 활성화
+    private fun setupAudioSession() {
         try {
             val session = AVAudioSession.sharedInstance()
             session.setCategory(AVAudioSessionCategoryPlayback, error = null)
             session.setActive(true, error = null)
         } catch (e: Exception) {
-            println("iOS AVAudioSession Error: ${e.message}")
+            println("iOS AVAudioSession Setup Error: ${e.message}")
         }
+    }
+
+    actual fun playSong(song: Song, playlist: List<Song>) {
+        val urlString = song.streamUrl ?: return
+        
+        var targetUrl = if (urlString.contains("music.yommi.mywire.org")) {
+            urlString.replace("https://", "http://")
+        } else {
+            urlString
+        }
+        targetUrl = targetUrl.replace(" ", "%20")
+
+        if (targetUrl.startsWith("http") && !targetUrl.contains("#")) {
+            targetUrl += "#.aac"
+        }
+
+        val url = NSURL.URLWithString(targetUrl) ?: return
+
+        setupAudioSession()
         
         removeTimeObserver()
         removeEndOfTimeObserver()
         player?.pause()
         
-        // 4. AVPlayerItem 및 플레이어 생성
         val playerItem = AVPlayerItem.playerItemWithURL(url)
         playerItem.preferredForwardBufferDuration = 5.0
         
-        // 다음 곡 자동 재생을 위한 옵저버 등록
         playerItemEndOfTimeObserver = NSNotificationCenter.defaultCenter.addObserverForName(
             name = AVPlayerItemDidPlayToEndTimeNotification,
             `object` = playerItem,
             queue = NSOperationQueue.mainQueue,
-            usingBlock = { _ ->
-                playNext()
-            }
+            usingBlock = { _ -> playNext() }
         )
         
-        player = AVPlayer.playerWithPlayerItem(playerItem)
+        if (player == null) {
+            player = AVPlayer.playerWithPlayerItem(playerItem)
+        } else {
+            player?.replaceCurrentItemWithPlayerItem(playerItem)
+        }
+        
         player?.automaticallyWaitsToMinimizeStalling = true
         player?.volume = _volume.value
 
@@ -101,7 +108,88 @@ actual class MusicPlayerController {
         player?.play()
         _isPlaying.value = true
         
+        // 새로운 곡 시작 시 캐시 초기화 및 정보 업데이트
+        cachedArtwork = null
+        currentArtworkUrl = null
+        updateNowPlayingInfo(song)
         setupTimeObserver()
+    }
+
+    private fun setupRemoteCommandCenter() {
+        val commandCenter = MPRemoteCommandCenter.sharedCommandCenter()
+        
+        commandCenter.playCommand.setEnabled(true)
+        commandCenter.playCommand.addTargetWithHandler { _ ->
+            if (!_isPlaying.value) togglePlayPause()
+            MPRemoteCommandHandlerStatusSuccess
+        }
+        
+        commandCenter.pauseCommand.setEnabled(true)
+        commandCenter.pauseCommand.addTargetWithHandler { _ ->
+            if (_isPlaying.value) togglePlayPause()
+            MPRemoteCommandHandlerStatusSuccess
+        }
+        
+        commandCenter.nextTrackCommand.setEnabled(true)
+        commandCenter.nextTrackCommand.addTargetWithHandler { _ ->
+            playNext()
+            MPRemoteCommandHandlerStatusSuccess
+        }
+        
+        commandCenter.previousTrackCommand.setEnabled(true)
+        commandCenter.previousTrackCommand.addTargetWithHandler { _ ->
+            playPrevious()
+            MPRemoteCommandHandlerStatusSuccess
+        }
+    }
+
+    private fun updateNowPlayingInfo(song: Song) {
+        val infoCenter = MPNowPlayingInfoCenter.defaultCenter()
+        val info = mutableMapOf<Any?, Any?>()
+        
+        info[MPMediaItemPropertyTitle] = song.name ?: "Unknown"
+        info[MPMediaItemPropertyArtist] = song.artist
+        info[MPMediaItemPropertyAlbumTitle] = song.albumName
+        info[MPNowPlayingInfoPropertyPlaybackRate] = if (_isPlaying.value) 1.0 else 0.0
+        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = _currentPosition.value / 1000.0
+        
+        // 캐시된 이미지가 있으면 즉시 사용 (깜빡임 방지)
+        cachedArtwork?.let {
+            info[MPMediaItemPropertyArtwork] = it
+        }
+
+        infoCenter.setNowPlayingInfo(info)
+
+        // 이미지 로드 로직 (캐시가 없거나 URL이 바뀐 경우에만)
+        val imageUrlString = song.metaPoster ?: song.streamUrl
+        if (imageUrlString != null && imageUrlString != currentArtworkUrl) {
+            mainScope.launch {
+                val artwork = loadArtwork(imageUrlString)
+                if (artwork != null) {
+                    cachedArtwork = artwork
+                    currentArtworkUrl = imageUrlString
+                    // 이미지가 로드되면 다시 한 번 업데이트
+                    info[MPMediaItemPropertyArtwork] = artwork
+                    infoCenter.setNowPlayingInfo(info)
+                }
+            }
+        }
+    }
+
+    private suspend fun loadArtwork(url: String): MPMediaItemArtwork? = withContext(Dispatchers.Default) {
+        try {
+            val nsUrl = if (url.startsWith("/")) NSURL.fileURLWithPath(url) else NSURL.URLWithString(url)
+            val data = NSData.dataWithContentsOfURL(nsUrl!!)
+            if (data != null) {
+                val image = UIImage.imageWithData(data)
+                if (image != null) {
+                    return@withContext MPMediaItemArtwork(boundsSize = image.size) { _ -> image }
+                }
+            }
+        } catch (e: Exception) {
+            println("iOS Artwork Load Error: ${e.message}")
+        }
+        return@withContext null
     }
 
     actual fun togglePlayPause() {
@@ -111,11 +199,11 @@ actual class MusicPlayerController {
             player?.play()
         }
         _isPlaying.value = !_isPlaying.value
+        _currentSong.value?.let { updateNowPlayingInfo(it) }
     }
 
-    @OptIn(ExperimentalForeignApi::class)
     private fun setupTimeObserver() {
-        val interval = CMTimeMakeWithSeconds(0.5, 1000)
+        val interval = CMTimeMakeWithSeconds(1.0, 1000)
         timeObserver = player?.addPeriodicTimeObserverForInterval(interval, null) { time ->
             val seconds = CMTimeGetSeconds(time)
             _currentPosition.value = (seconds * 1000).toLong()
@@ -127,6 +215,12 @@ actual class MusicPlayerController {
                     _duration.value = (durationSeconds * 1000).toLong()
                 }
             }
+            
+            // 재생 시간 업데이트 시에는 이미지를 다시 로드하지 않도록 하여 깜빡임 방지
+            val infoCenter = MPNowPlayingInfoCenter.defaultCenter()
+            val currentInfo = infoCenter.nowPlayingInfo()?.toMutableMap() ?: mutableMapOf()
+            currentInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = _currentPosition.value / 1000.0
+            infoCenter.setNowPlayingInfo(currentInfo)
         }
     }
 
@@ -149,8 +243,8 @@ actual class MusicPlayerController {
         if (nextIndex < _currentPlaylist.value.size) {
             playSong(_currentPlaylist.value[nextIndex], _currentPlaylist.value)
         } else {
-            // 리스트의 마지막 곡이면 중지하거나 처음으로 돌아갈 수 있음
             _isPlaying.value = false
+            _currentSong.value?.let { updateNowPlayingInfo(it) }
         }
     }
 
@@ -161,10 +255,11 @@ actual class MusicPlayerController {
         }
     }
 
-    @OptIn(ExperimentalForeignApi::class)
     actual fun seekTo(position: Long) {
         val time = CMTimeMakeWithSeconds(position / 1000.0, 1000)
         player?.seekToTime(time)
+        _currentPosition.value = position
+        _currentSong.value?.let { updateNowPlayingInfo(it) }
     }
 
     actual fun skipToIndex(index: Int) {

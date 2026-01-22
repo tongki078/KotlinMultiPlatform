@@ -1,6 +1,7 @@
 package com.nas.musicplayer.ui.music
 
 import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
@@ -39,6 +41,8 @@ fun MusicSearchScreen(
     onNavigateToAlbum: (Album) -> Unit,
     onSongClick: (Song) -> Unit,
     onNavigateToPlaylists: () -> Unit,
+    onVoiceSearchClick: () -> Unit,
+    isVoiceSearching: Boolean = false,
     viewModel: MusicSearchViewModel
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -53,12 +57,22 @@ fun MusicSearchScreen(
 
     val primaryColor = MaterialTheme.colorScheme.primary
 
+    // 마이크 애니메이션 (깜빡임 효과)
+    val infiniteTransition = rememberInfiniteTransition()
+    val micAlpha by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.3f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        )
+    )
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
     ) {
-        // 상단 헤더: 검색창과 플레이리스트 버튼 통합
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -68,8 +82,22 @@ fun MusicSearchScreen(
             TextField(
                 value = uiState.searchQuery,
                 onValueChange = { viewModel.onSearchQueryChanged(it) },
-                placeholder = { Text("아티스트, 노래, 앨범 등") },
+                placeholder = { 
+                    Text(if (isVoiceSearching) "듣고 있습니다..." else "아티스트, 노래, 앨범 등") 
+                },
                 leadingIcon = { Icon(Icons.Default.Search, null) },
+                trailingIcon = {
+                    IconButton(onClick = onVoiceSearchClick) {
+                        Icon(
+                            imageVector = Icons.Default.Mic, 
+                            contentDescription = "Voice Search", 
+                            tint = if (isVoiceSearching) Color.Red else primaryColor,
+                            modifier = Modifier.graphicsLayer {
+                                alpha = if (isVoiceSearching) micAlpha else 1f
+                            }
+                        )
+                    }
+                },
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(12.dp))
@@ -117,7 +145,6 @@ fun MusicSearchScreen(
                 }
             }
 
-            // 최근 검색어 뷰
             if (isSearchFocused && uiState.searchQuery.isEmpty() && uiState.recentSearches.isNotEmpty()) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -142,7 +169,6 @@ fun MusicSearchScreen(
         }
     }
 
-    // 더보기 시트
     if (selectedSongForSheet != null) {
         ModalBottomSheet(
             onDismissRequest = { selectedSongForSheet = null },
@@ -179,27 +205,33 @@ fun RecentSearchesView(
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         item {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("최근 검색어", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text("지우기", color = primaryColor, modifier = Modifier.clickable { onClearAll() })
+                Text("최근 검색어", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("지우기", color = primaryColor, fontSize = 14.sp, modifier = Modifier.clickable { onClearAll() })
             }
         }
         items(recentSearches) { search ->
             Row(
-                modifier = Modifier.fillMaxWidth().clickable { onSearchClick(search.query) }.padding(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onSearchClick(search.query) }
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.History, null, tint = Color.Gray, modifier = Modifier.size(20.dp))
-                Spacer(modifier = Modifier.width(16.dp))
-                Text(search.query, modifier = Modifier.weight(1f), fontSize = 17.sp)
-                IconButton(onClick = { onDeleteClick(search.query) }) {
-                    Icon(Icons.Default.Close, null, tint = Color.LightGray, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.History, null, tint = Color.Gray, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(search.query, modifier = Modifier.weight(1f), fontSize = 15.sp)
+                IconButton(
+                    onClick = { onDeleteClick(search.query) },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(Icons.Default.Close, null, tint = Color.LightGray, modifier = Modifier.size(14.dp))
                 }
             }
-            HorizontalDivider(modifier = Modifier.padding(start = 52.dp, end = 16.dp), thickness = 0.5.dp)
+            HorizontalDivider(modifier = Modifier.padding(start = 46.dp, end = 16.dp), thickness = 0.5.dp, color = Color.LightGray.copy(alpha = 0.3f))
         }
     }
 }

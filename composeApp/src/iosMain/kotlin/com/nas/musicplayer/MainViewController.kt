@@ -1,25 +1,52 @@
 package com.nas.musicplayer
 
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.ui.window.ComposeUIViewController
 import com.nas.musicplayer.db.getDatabase
 
 fun MainViewController() = ComposeUIViewController {
-    // 1. 데이터베이스 및 리포지토리 초기화
     val database = remember { getDatabase() }
     val repository = remember { MusicRepository(database.playlistDao(), database.recentSearchDao()) }
-    
-    // 2. 컨트롤러 및 뷰모델 초기화
     val controller = remember { MusicPlayerController() }
     val viewModel = remember { MusicPlayerViewModel(controller, repository) }
-
-    // 3. iOS 로컬 노래 로드
     val localSongs = remember { LocalMusicLoader.loadLocalMusic() }
 
-    // 4. 공통 App 호출
+    var voiceQuery by remember { mutableStateOf("") }
+    var isVoiceFinal by remember { mutableStateOf(false) }
+    var isVoiceSearching by remember { mutableStateOf(false) }
+    
+    val voiceHelper = remember { 
+        VoiceSearchHelper(
+            onResult = { text, final -> 
+                voiceQuery = text
+                isVoiceFinal = final
+                if (final) {
+                    isVoiceSearching = false
+                }
+            },
+            onError = { 
+                println("iOS Voice Search Error: $it")
+                isVoiceSearching = false
+            }
+        )
+    }
+
     App(
         musicRepository = repository,
         musicPlayerViewModel = viewModel,
-        localSongs = localSongs
+        localSongs = localSongs,
+        voiceQuery = voiceQuery,
+        isVoiceFinal = isVoiceFinal,
+        isVoiceSearching = isVoiceSearching,
+        onVoiceSearchClick = { 
+            isVoiceSearching = true
+            voiceQuery = ""
+            isVoiceFinal = false
+            voiceHelper.startListening() 
+        },
+        onVoiceQueryConsumed = { 
+            voiceQuery = ""
+            isVoiceFinal = false
+        }
     )
 }

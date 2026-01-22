@@ -23,7 +23,12 @@ import com.nas.musicplayer.ui.music.*
 fun App(
     musicRepository: MusicRepository,
     musicPlayerViewModel: MusicPlayerViewModel,
-    localSongs: List<Song> = emptyList()
+    localSongs: List<Song> = emptyList(),
+    voiceQuery: String = "",
+    isVoiceFinal: Boolean = false,
+    isVoiceSearching: Boolean = false,
+    onVoiceSearchClick: () -> Unit = {},
+    onVoiceQueryConsumed: () -> Unit = {}
 ) {
     val searchViewModel: MusicSearchViewModel = viewModel(
         factory = MusicSearchViewModel.Factory(musicRepository)
@@ -36,8 +41,23 @@ fun App(
     val currentSong by musicPlayerViewModel.currentSong.collectAsState()
     val isPlaying by musicPlayerViewModel.isPlaying.collectAsState()
 
+    // 인라인 음성 검색 로직: 실시간으로 텍스트를 보여주되 최종일 때만 검색 실행
+    LaunchedEffect(voiceQuery, isVoiceFinal) {
+        if (voiceQuery.isNotEmpty()) {
+            searchViewModel.onSearchQueryChanged(voiceQuery)
+            if (isVoiceFinal) {
+                searchViewModel.performSearch(voiceQuery)
+                onVoiceQueryConsumed()
+            }
+        }
+    }
+
+    val navBarHeight = 80.dp
+    val miniPlayerHeight = 72.dp
+
     MaterialTheme {
         Scaffold(
+            contentWindowInsets = WindowInsets(0.dp),
             bottomBar = {
                 if (currentRoute != "player") {
                     Column {
@@ -48,9 +68,7 @@ fun App(
                         NavigationBar(
                             containerColor = MaterialTheme.colorScheme.surface,
                             tonalElevation = 0.dp,
-                            // 상하 여백을 대칭으로 만들기 위해 높이를 확보하고 인셋을 명시적으로 제어
-                            modifier = Modifier.height(80.dp),
-                            // 위아래 여백을 동일하게 가져가기 위해 내부 인셋을 비우고 정중앙 배치를 유도
+                            modifier = Modifier.height(navBarHeight),
                             windowInsets = WindowInsets(0.dp) 
                         ) {
                             NavigationBarItem(
@@ -60,13 +78,7 @@ fun App(
                                         popUpTo("search") { inclusive = true }
                                     }
                                 },
-                                icon = { 
-                                    Icon(
-                                        imageVector = Icons.Default.Search, 
-                                        contentDescription = "Search",
-                                        modifier = Modifier.size(26.dp) // 아이콘 크기 최적화
-                                    ) 
-                                },
+                                icon = { Icon(Icons.Default.Search, "Search", modifier = Modifier.size(26.dp)) },
                                 label = { Text("검색", fontSize = 12.sp) },
                                 alwaysShowLabel = true
                             )
@@ -77,13 +89,7 @@ fun App(
                                         popUpTo("search")
                                     }
                                 },
-                                icon = { 
-                                    Icon(
-                                        imageVector = Icons.Default.LibraryMusic, 
-                                        contentDescription = "Library",
-                                        modifier = Modifier.size(26.dp)
-                                    ) 
-                                },
+                                icon = { Icon(Icons.Default.LibraryMusic, "Library", modifier = Modifier.size(26.dp)) },
                                 label = { Text("보관함", fontSize = 12.sp) },
                                 alwaysShowLabel = true
                             )
@@ -92,10 +98,9 @@ fun App(
                 }
             }
         ) { innerPadding ->
-            // 하단 탭 + 시스템 네비게이션 바 영역을 포함한 하단 패딩 적용
-            // NavigationBar의 높이가 80dp이므로 그에 맞춰 본문 영역 확보
-            val bottomPadding = if (currentRoute != "player") {
-                innerPadding.calculateBottomPadding().coerceAtLeast(80.dp)
+            val totalBottomPadding = if (currentRoute != "player") {
+                val basePadding = innerPadding.calculateBottomPadding().coerceAtLeast(navBarHeight)
+                if (currentSong != null) basePadding + miniPlayerHeight else basePadding
             } else {
                 0.dp
             }
@@ -103,7 +108,7 @@ fun App(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = bottomPadding)
+                    .padding(bottom = totalBottomPadding)
             ) {
                 NavHost(navController = navController, startDestination = "search") {
                     composable("search") {
@@ -116,7 +121,9 @@ fun App(
                             onNavigateToPlaylists = { navController.navigate("playlists") },
                             onNavigateToArtist = { /* TODO */ },
                             onNavigateToAlbum = { /* TODO */ },
-                            onNavigateToAddToPlaylist = { /* TODO */ }
+                            onNavigateToAddToPlaylist = { /* TODO */ },
+                            onVoiceSearchClick = onVoiceSearchClick,
+                            isVoiceSearching = isVoiceSearching // 인라인 상태 전달
                         )
                     }
                     composable("library") {
@@ -132,6 +139,7 @@ fun App(
                             onNavigateToAlbum = { /* TODO */ }
                         )
                     }
+                    // ... 나머지 컴포저블 유지
                     composable("playlists") {
                         PlaylistsListScreen(
                             repository = musicRepository,
@@ -166,13 +174,19 @@ fun App(
                         )
                     }
                 }
+            }
 
-                if (currentRoute != "player" && currentSong != null) {
+            if (currentRoute != "player" && currentSong != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = innerPadding.calculateBottomPadding())
+                ) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .align(Alignment.BottomCenter)
-                            .padding(bottom = 4.dp)
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
                         MiniPlayer(
                             song = currentSong!!,

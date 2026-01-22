@@ -1,29 +1,28 @@
 package com.nas.musicplayer
 
+import android.content.ComponentName
 import android.content.Context
 import android.media.audiofx.LoudnessEnhancer
 import android.net.Uri
 import android.util.Log
-import androidx.media3.common.AudioAttributes
-import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
-import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.okhttp.OkHttpDataSource
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
+import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
 import java.io.File
 
-actual class MusicPlayerController(context: Context) {
+actual class MusicPlayerController(private val context: Context) {
 
-    private var exoPlayer: ExoPlayer? = null
+    private var player: Player? = null
+    private var controllerFuture: ListenableFuture<MediaController>? = null
     private var loudnessEnhancer: LoudnessEnhancer? = null
 
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
@@ -50,54 +49,51 @@ actual class MusicPlayerController(context: Context) {
     actual val volume = _volume.asStateFlow()
 
     init {
-        val audioAttributes = AudioAttributes.Builder()
-            .setUsage(C.USAGE_MEDIA)
-            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-            .build()
-
-        val httpDataSourceFactory = OkHttpDataSource.Factory(OkHttpClient())
-        val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
-
-        exoPlayer = ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
-            .setAudioAttributes(audioAttributes, true)
-            .build()
-
-        // 기기 자체 소리가 작을 수 있으므로 플레이어 볼륨을 항상 최대로 유지
-        exoPlayer?.volume = 1.0f
-
-        exoPlayer?.addListener(object : Player.Listener {
-            override fun onIsPlayingChanged(isPlayingValue: Boolean) {
-                _isPlaying.value = isPlayingValue
-            }
-
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                val index = exoPlayer?.currentMediaItemIndex ?: 0
-                if (index in _currentPlaylist.value.indices) {
-                    _currentIndex.value = index
-                    _currentSong.value = _currentPlaylist.value[index]
-                }
-            }
-
-            override fun onAudioSessionIdChanged(audioSessionId: Int) {
-                setupLoudnessEnhancer(audioSessionId)
-            }
-        })
-
+        initializeController()
+        
         coroutineScope.launch {
             while (true) {
-                _currentPosition.value = exoPlayer?.currentPosition ?: 0L
-                _duration.value = exoPlayer?.duration ?: 0L
+                _currentPosition.value = player?.currentPosition ?: 0L
+                _duration.value = player?.duration ?: 0L
                 delay(500)
             }
         }
+    }
+
+    private fun initializeController() {
+        val sessionToken = SessionToken(context, ComponentName(context, PlaybackService::class.java))
+        controllerFuture = MediaController.Builder(context, sessionToken).buildAsync()
+        controllerFuture?.addListener({
+            try {
+                val controller = controllerFuture?.get()
+                player = controller
+                player?.addListener(object : Player.Listener {
+                    override fun onIsPlayingChanged(isPlayingValue: Boolean) {
+                        _isPlaying.value = isPlayingValue
+                    }
+                    override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                        val index = player?.currentMediaItemIndex ?: 0
+                        if (index in _currentPlaylist.value.indices) {
+                            _currentIndex.value = index
+                            _currentSong.value = _currentPlaylist.value[index]
+                        }
+                    }
+                    override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                        setupLoudnessEnhancer(audioSessionId)
+                    }
+                })
+                // 초기 볼륨 설정
+                player?.volume = _volume.value
+            } catch (e: Exception) {
+                Log.e("MusicPlayerController", "Failed to get MediaController", e)
+            }
+        }, MoreExecutors.directExecutor())
     }
 
     private fun setupLoudnessEnhancer(sessionId: Int) {
         try {
             loudnessEnhancer?.release()
             loudnessEnhancer = LoudnessEnhancer(sessionId).apply {
-                // targetGain을 5000으로 높여 소리를 매우 강력하게 증폭시킵니다 (기본값 대비 약 2~3배)
                 setTargetGain(5000)
                 enabled = true
             }
@@ -114,9 +110,9 @@ actual class MusicPlayerController(context: Context) {
         _currentIndex.value = startIndex
         _currentSong.value = song
         
-        exoPlayer?.let { player ->
-            player.stop()
-            player.clearMediaItems()
+        player?.let { p ->
+            p.stop()
+            p.clearMediaItems()
             
             playlist.forEach { s ->
                 val uriString = s.streamUrl ?: ""
@@ -125,42 +121,42 @@ actual class MusicPlayerController(context: Context) {
                 } else {
                     Uri.parse(uriString)
                 }
-                player.addMediaItem(MediaItem.fromUri(uri))
+                p.addMediaItem(MediaItem.fromUri(uri))
             }
 
-            player.prepare()
-            player.seekTo(startIndex, 0L)
-            player.play()
+            p.prepare()
+            p.seekTo(startIndex, 0L)
+            p.play()
         }
     }
 
     actual fun togglePlayPause() {
-        if (exoPlayer?.isPlaying == true) exoPlayer?.pause() else exoPlayer?.play()
+        if (player?.isPlaying == true) player?.pause() else player?.play()
     }
 
     actual fun playNext() {
-        exoPlayer?.seekToNextMediaItem()
+        player?.seekToNextMediaItem()
     }
 
     actual fun playPrevious() {
-        if ((exoPlayer?.currentPosition ?: 0) > 5000) exoPlayer?.seekTo(0)
-        else exoPlayer?.seekToPreviousMediaItem()
+        if ((player?.currentPosition ?: 0) > 5000) player?.seekTo(0)
+        else player?.seekToPreviousMediaItem()
     }
 
     actual fun seekTo(position: Long) {
-        exoPlayer?.seekTo(position)
+        player?.seekTo(position)
     }
 
     actual fun skipToIndex(index: Int) {
         if (index in _currentPlaylist.value.indices) {
-            exoPlayer?.seekTo(index, 0L)
-            if (exoPlayer?.isPlaying == false) exoPlayer?.play()
+            player?.seekTo(index, 0L)
+            if (player?.isPlaying == false) player?.play()
         }
     }
     
     actual fun setVolume(volume: Float) {
         val level = volume.coerceIn(0f, 1f)
         _volume.value = level
-        exoPlayer?.volume = level
+        player?.volume = level
     }
 }
