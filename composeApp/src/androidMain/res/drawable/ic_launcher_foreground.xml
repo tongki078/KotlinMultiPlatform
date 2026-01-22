@@ -4,8 +4,7 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-
-    <!-- 사용자 제공 SVG 원본 데이터를 기반으로 한 정중앙 정렬 및 크기 보정 음표 -->
+    <!-- SVG 데이터를 기반으로 한 정중앙 정렬 및 크기 최적화된 음표 -->
     <group
         android:scaleX="0.55"
         android:scaleY="0.55"

@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -48,6 +49,7 @@ fun MusicSearchScreen(
     val uiState by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()
     val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     
     var isSearchFocused by remember { mutableStateOf(false) }
 
@@ -56,6 +58,14 @@ fun MusicSearchScreen(
     var selectedSongForSheet by remember { mutableStateOf<Song?>(null) }
 
     val primaryColor = MaterialTheme.colorScheme.primary
+
+    // 음성 검색이 종료되고 쿼리가 있을 때 자동으로 포커스를 해제하여 검색 결과 노출
+    LaunchedEffect(isVoiceSearching) {
+        if (!isVoiceSearching && uiState.searchQuery.isNotEmpty()) {
+            focusManager.clearFocus()
+            keyboardController?.hide()
+        }
+    }
 
     // 마이크 애니메이션 (깜빡임 효과)
     val infiniteTransition = rememberInfiniteTransition()
