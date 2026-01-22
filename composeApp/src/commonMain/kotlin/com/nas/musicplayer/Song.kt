@@ -25,5 +25,6 @@ data class Song(
     val artist: String = "Unknown Artist",
     val albumName: String = "Unknown Album",
     val albumArtRes: Int? = null,
-    val albumInfo: String? = null 
+    val albumInfo: String? = null,
+    val lyrics: String? = null // 가사 필드 추가
 )

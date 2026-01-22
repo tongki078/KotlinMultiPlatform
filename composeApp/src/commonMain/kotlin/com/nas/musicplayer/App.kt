@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -38,10 +39,11 @@ fun App(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
+    // ViewModel 상태 수집 로직 복구
     val currentSong by musicPlayerViewModel.currentSong.collectAsState()
     val isPlaying by musicPlayerViewModel.isPlaying.collectAsState()
 
-    // 인라인 음성 검색 로직: 실시간으로 텍스트를 보여주되 최종일 때만 검색 실행
+    // 음성 인식 결과 처리 로직
     LaunchedEffect(voiceQuery, isVoiceFinal) {
         if (voiceQuery.isNotEmpty()) {
             searchViewModel.onSearchQueryChanged(voiceQuery)
@@ -75,7 +77,11 @@ fun App(
                                 selected = currentRoute == "search" || currentRoute == null,
                                 onClick = { 
                                     navController.navigate("search") {
-                                        popUpTo("search") { inclusive = true }
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
                                     }
                                 },
                                 icon = { Icon(Icons.Default.Search, "Search", modifier = Modifier.size(26.dp)) },
@@ -83,10 +89,14 @@ fun App(
                                 alwaysShowLabel = true
                             )
                             NavigationBarItem(
-                                selected = currentRoute == "library" || currentRoute == "playlists",
+                                selected = currentRoute == "library" || currentRoute == "playlists" || currentRoute?.startsWith("playlist_detail") == true,
                                 onClick = { 
                                     navController.navigate("library") {
-                                        popUpTo("search")
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
                                     }
                                 },
                                 icon = { Icon(Icons.Default.LibraryMusic, "Library", modifier = Modifier.size(26.dp)) },
@@ -110,7 +120,10 @@ fun App(
                     .fillMaxSize()
                     .padding(bottom = totalBottomPadding)
             ) {
-                NavHost(navController = navController, startDestination = "search") {
+                NavHost(
+                    navController = navController, 
+                    startDestination = "search"
+                ) {
                     composable("search") {
                         MusicSearchScreen(
                             viewModel = searchViewModel,
@@ -123,7 +136,7 @@ fun App(
                             onNavigateToAlbum = { /* TODO */ },
                             onNavigateToAddToPlaylist = { /* TODO */ },
                             onVoiceSearchClick = onVoiceSearchClick,
-                            isVoiceSearching = isVoiceSearching // 인라인 상태 전달
+                            isVoiceSearching = isVoiceSearching
                         )
                     }
                     composable("library") {
@@ -139,7 +152,6 @@ fun App(
                             onNavigateToAlbum = { /* TODO */ }
                         )
                     }
-                    // ... 나머지 컴포저블 유지
                     composable("playlists") {
                         PlaylistsListScreen(
                             repository = musicRepository,
