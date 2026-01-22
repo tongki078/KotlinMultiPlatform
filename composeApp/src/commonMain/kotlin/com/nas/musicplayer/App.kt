@@ -39,7 +39,6 @@ fun App(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    // ViewModel 상태 수집 로직 복구
     val currentSong by musicPlayerViewModel.currentSong.collectAsState()
     val isPlaying by musicPlayerViewModel.isPlaying.collectAsState()
 
@@ -54,12 +53,11 @@ fun App(
         }
     }
 
-    val navBarHeight = 80.dp
     val miniPlayerHeight = 72.dp
 
     MaterialTheme {
         Scaffold(
-            contentWindowInsets = WindowInsets(0.dp),
+            // Scaffold가 시스템 바를 위해 확보하는 자동 여백 사용 (잘림 방지)
             bottomBar = {
                 if (currentRoute != "player") {
                     Column {
@@ -69,9 +67,8 @@ fun App(
                         )
                         NavigationBar(
                             containerColor = MaterialTheme.colorScheme.surface,
-                            tonalElevation = 0.dp,
-                            modifier = Modifier.height(navBarHeight),
-                            windowInsets = WindowInsets(0.dp) 
+                            tonalElevation = 0.dp
+                            // windowInsets 설정을 기본값으로 두어 시스템 내비게이션 바 영역을 자동 확보
                         ) {
                             NavigationBarItem(
                                 selected = currentRoute == "search" || currentRoute == null,
@@ -108,11 +105,12 @@ fun App(
                 }
             }
         ) { innerPadding ->
-            val totalBottomPadding = if (currentRoute != "player") {
-                val basePadding = innerPadding.calculateBottomPadding().coerceAtLeast(navBarHeight)
-                if (currentSong != null) basePadding + miniPlayerHeight else basePadding
+            // 시스템 바를 포함한 정확한 하단 여백 적용
+            val bottomPadding = innerPadding.calculateBottomPadding()
+            val totalBottomPadding = if (currentRoute != "player" && currentSong != null) {
+                bottomPadding + miniPlayerHeight
             } else {
-                0.dp
+                bottomPadding
             }
 
             Box(
@@ -192,7 +190,7 @@ fun App(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(bottom = innerPadding.calculateBottomPadding())
+                        .padding(bottom = bottomPadding) // 하단 탭 바로 위에 밀착
                 ) {
                     Box(
                         modifier = Modifier
