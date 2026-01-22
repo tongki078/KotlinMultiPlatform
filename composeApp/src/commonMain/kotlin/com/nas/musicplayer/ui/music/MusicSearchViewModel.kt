@@ -42,7 +42,6 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         }
     }
 
-    // Factory 추가
     companion object {
         fun Factory(repository: MusicRepository): ViewModelProvider.Factory = viewModelFactory {
             initializer {
@@ -62,9 +61,9 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, searchQuery = "") }
             try {
-                val top100Songs = musicApiService.getTop100().toSongList().filter { !it.isDir }.map {
-                    it.copy(artist = it.parentPath ?: "Unknown Artist", albumName = it.parentPath ?: "Unknown Album")
-                }
+                val top100Songs = musicApiService.getTop100().toSongList()
+                    .filter { !it.isDir }
+                    .map { cleanSongInfo(it) }
                 _uiState.update { it.copy(songs = top100Songs, isLoading = false) }
             } catch (e: Exception) {
                 _uiState.update { it.copy(isLoading = false) }
@@ -84,13 +83,61 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
             repository.addRecentSearch(query)
             _uiState.update { it.copy(isLoading = true) }
             try {
-                val searchResult = musicApiService.search(query).toSongList().filter { !it.isDir }.map {
-                    it.copy(artist = it.parentPath ?: "Unknown Artist", albumName = it.parentPath ?: "Unknown Album")
-                }
+                val searchResult = musicApiService.search(query).toSongList()
+                    .filter { !it.isDir }
+                    .map { cleanSongInfo(it) }
                 _uiState.update { it.copy(songs = searchResult, isLoading = false) }
             } catch (e: Exception) {
                 _uiState.update { it.copy(isLoading = false) }
             }
+        }
+    }
+
+    /**
+     * 경로와 파일명에서 실제 아티스트와 제목을 정밀하게 추출하는 로직
+     */
+    private fun cleanSongInfo(song: Song): Song {
+        val fileName = song.name ?: ""
+        // 1. 확장자 제거
+        var cleanName = fileName.replace(Regex("\\.(mp3|flac|m4a|wav)$", RegexOption.IGNORE_CASE), "").trim()
+        
+        // 2. 앞쪽의 트랙 번호 제거 (예: "084. ", "01-", "1. ")
+        cleanName = cleanName.replace(Regex("^\\d+[.\\-_\\s]+"), "").trim()
+
+        // 3. "가수 - 제목" 형식 파싱
+        return if (cleanName.contains(" - ")) {
+            val parts = cleanName.split(" - ", limit = 2)
+            val artistPart = parts[0].trim()
+            val titlePart = parts[1].trim()
+            
+            song.copy(
+                name = titlePart,
+                artist = artistPart,
+                albumName = extractAlbumName(song)
+            )
+        } else {
+            // 형식이 아닐 경우 폴더명 활용
+            val folderInfo = extractAlbumAndArtistFromPath(song)
+            song.copy(
+                name = cleanName,
+                artist = folderInfo.first,
+                albumName = folderInfo.second
+            )
+        }
+    }
+
+    private fun extractAlbumName(song: Song): String {
+        return song.parentPath?.split("/")?.lastOrNull()?.replace("MUSIC/", "") ?: "Unknown Album"
+    }
+
+    private fun extractAlbumAndArtistFromPath(song: Song): Pair<String, String> {
+        val pathParts = song.parentPath?.split("/")?.filter { it.isNotBlank() } ?: emptyList()
+        val lastFolder = pathParts.lastOrNull() ?: "Unknown"
+        // MUSIC/국내/가수명/앨범명 형태일 경우 대응
+        return if (pathParts.size >= 2) {
+            Pair(pathParts[pathParts.size - 2], lastFolder)
+        } else {
+            Pair(lastFolder, lastFolder)
         }
     }
 
@@ -110,9 +157,9 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isArtistLoading = true) }
             try {
-                val relatedSongs = musicApiService.search(artistName).toSongList().filter { !it.isDir }.map {
-                    it.copy(artist = it.parentPath ?: "Unknown Artist", albumName = it.parentPath ?: "Unknown Album")
-                }
+                val relatedSongs = musicApiService.search(artistName).toSongList()
+                    .filter { !it.isDir }
+                    .map { cleanSongInfo(it) }
                 val artistInfo = Artist(
                     name = artistName,
                     imageUrl = fallbackImageUrl,

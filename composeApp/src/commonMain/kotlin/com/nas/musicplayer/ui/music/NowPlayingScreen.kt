@@ -1,7 +1,7 @@
 package com.nas.musicplayer.ui.music
 
 import androidx.compose.animation.*
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
@@ -77,12 +77,6 @@ fun NowPlayingScreen(
         }
     }
 
-    LaunchedEffect(pagerState.currentPage) {
-        if (pagerState.currentPage != currentIndex && playlist.isNotEmpty()) {
-            viewModel.skipToIndex(pagerState.currentPage)
-        }
-    }
-
     val albumArtScale by animateFloatAsState(targetValue = if (isPlaying) 1f else 0.88f, label = "albumArtScale")
 
     Box(
@@ -134,7 +128,6 @@ fun NowPlayingScreen(
                     transitionSpec = { fadeIn() togetherWith fadeOut() }
                 ) { targetIsLyrics ->
                     if (targetIsLyrics) {
-                        // 가사 뷰를 클릭하면 다시 앨범 아트 모드로 전환
                         Box(modifier = Modifier.fillMaxSize().clickable { isLyricsMode = false }) {
                             LyricsView(song = song, currentPosition = currentPosition)
                         }
@@ -254,40 +247,94 @@ fun NowPlayingScreen(
     }
 }
 
+// LRC 가사 한 줄을 나타내는 데이터 클래스
+data class LyricsLine(val timeMs: Long, val text: String)
+
 @Composable
 fun LyricsView(song: Song?, currentPosition: Long) {
-    val lyricsLines = remember(song) {
-        song?.lyrics?.lines() ?: listOf(
-            "가사 정보가 없습니다.",
-            "",
-            "음악을 즐겨보세요!"
-        )
+    // 1. LRC 가사 파싱
+    val parsedLyrics = remember(song?.lyrics) {
+        parseLrc(song?.lyrics)
     }
 
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.Start,
-        verticalArrangement = Arrangement.spacedBy(24.dp),
-        contentPadding = PaddingValues(vertical = 100.dp),
-        userScrollEnabled = true // 가사는 스크롤 가능해야 함
-    ) {
-        itemsIndexed(lyricsLines) { index, line ->
-            Text(
-                text = line,
-                style = MaterialTheme.typography.headlineSmall.copy(
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 28.sp,
-                    lineHeight = 36.sp
-                ),
-                color = Color.White,
-                modifier = Modifier.fillMaxWidth().alpha(0.9f),
-                textAlign = TextAlign.Left
-            )
+    // 2. 현재 시간에 맞는 가사 인덱스 계산
+    val activeLineIndex = remember(currentPosition, parsedLyrics) {
+        val index = parsedLyrics.indexOfLast { it.timeMs <= currentPosition }
+        if (index == -1) 0 else index
+    }
+
+    // 3. 현재 가사로 자동 스크롤 (애플 뮤직 스타일)
+    LaunchedEffect(activeLineIndex) {
+        if (parsedLyrics.isNotEmpty()) {
+            listState.animateScrollToItem(activeLineIndex, scrollOffset = -200)
         }
     }
+
+    if (parsedLyrics.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("가사 정보가 없습니다.", color = Color.White.copy(alpha = 0.5f))
+        }
+    } else {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(32.dp),
+            contentPadding = PaddingValues(vertical = 250.dp),
+            userScrollEnabled = true
+        ) {
+            itemsIndexed(parsedLyrics) { index, line ->
+                val isActive = index == activeLineIndex
+                val alpha by animateFloatAsState(if (isActive) 1f else 0.3f)
+                val scale by animateFloatAsState(if (isActive) 1.05f else 1f)
+
+                Text(
+                    text = line.text,
+                    style = MaterialTheme.typography.headlineSmall.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 28.sp,
+                        lineHeight = 38.sp
+                    ),
+                    color = Color.White,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .alpha(alpha)
+                        .scale(scale),
+                    textAlign = TextAlign.Left
+                )
+            }
+        }
+    }
+}
+
+// LRC 가사 파서 함수
+private fun parseLrc(lrcContent: String?): List<LyricsLine> {
+    if (lrcContent == null) return emptyList()
+    
+    val lines = mutableListOf<LyricsLine>()
+    val regex = Regex("\\[(\\d+):(\\d+)\\.(\\d+)\\](.*)")
+    
+    lrcContent.lines().forEach { line ->
+        val match = regex.find(line)
+        if (match != null) {
+            val min = match.groupValues[1].toLong()
+            val sec = match.groupValues[2].toLong()
+            val ms = match.groupValues[3].toLong()
+            val text = match.groupValues[4].trim()
+            
+            val timeMs = (min * 60 * 1000) + (sec * 1000) + (ms * 10)
+            if (text.isNotEmpty()) {
+                lines.add(LyricsLine(timeMs, text))
+            }
+        } else if (line.isNotBlank() && !line.startsWith("[")) {
+            // 타임스탬프 없는 일반 텍스트 가사 처리 (순차적으로 배치)
+            lines.add(LyricsLine(0, line.trim()))
+        }
+    }
+    return lines.sortedBy { it.timeMs }
 }
 
 private fun formatTime(ms: Long): String {

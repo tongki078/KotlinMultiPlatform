@@ -51,11 +51,16 @@ actual class MusicPlayerController(private val context: Context) {
     init {
         initializeController()
         
+        // 가사 싱크를 위해 16ms(60fps) 주기로 위치 추적
         coroutineScope.launch {
             while (true) {
-                _currentPosition.value = player?.currentPosition ?: 0L
-                _duration.value = player?.duration ?: 0L
-                delay(500)
+                player?.let { p ->
+                    if (p.isPlaying) {
+                        _currentPosition.value = p.currentPosition
+                        _duration.value = p.duration
+                    }
+                }
+                delay(16) 
             }
         }
     }
@@ -82,8 +87,7 @@ actual class MusicPlayerController(private val context: Context) {
                         setupLoudnessEnhancer(audioSessionId)
                     }
                 })
-                // 초기 볼륨 설정
-                player?.volume = _volume.value
+                player?.volume = 1.0f
             } catch (e: Exception) {
                 Log.e("MusicPlayerController", "Failed to get MediaController", e)
             }
@@ -93,9 +97,11 @@ actual class MusicPlayerController(private val context: Context) {
     private fun setupLoudnessEnhancer(sessionId: Int) {
         try {
             loudnessEnhancer?.release()
-            loudnessEnhancer = LoudnessEnhancer(sessionId).apply {
-                setTargetGain(5000)
-                enabled = true
+            if (sessionId != 0) {
+                loudnessEnhancer = LoudnessEnhancer(sessionId).apply {
+                    setTargetGain(10000) 
+                    enabled = true
+                }
             }
         } catch (e: Exception) {
             Log.e("MusicPlayerController", "LoudnessEnhancer failed", e)
