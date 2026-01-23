@@ -3,6 +3,7 @@ package com.nas.musicplayer.ui.music
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -52,6 +54,8 @@ fun MusicSearchScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     
     var isSearchFocused by remember { mutableStateOf(false) }
+    // 마지막으로 실행된 실제 검색어를 저장하여 취소 시 복구할 용도
+    var lastAppliedQuery by remember { mutableStateOf("") }
 
     val sheetState = rememberModalBottomSheetState()
     val scope = rememberCoroutineScope()
@@ -64,6 +68,7 @@ fun MusicSearchScreen(
         if (!isVoiceSearching && uiState.searchQuery.isNotEmpty()) {
             focusManager.clearFocus()
             keyboardController?.hide()
+            lastAppliedQuery = uiState.searchQuery
         }
     }
 
@@ -82,6 +87,18 @@ fun MusicSearchScreen(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
+            // 외부 터치 시 포커스 해제 및 키보드 닫기 구현
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = {
+                    if (isSearchFocused) {
+                        // 입력 중이던 텍스트를 마지막 검색 결과 상태로 복구
+                        viewModel.onSearchQueryChanged(lastAppliedQuery)
+                        focusManager.clearFocus()
+                        isSearchFocused = false
+                        keyboardController?.hide()
+                    }
+                })
+            }
     ) {
         Row(
             modifier = Modifier
@@ -115,6 +132,7 @@ fun MusicSearchScreen(
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = {
+                    lastAppliedQuery = uiState.searchQuery
                     viewModel.performSearch()
                     focusManager.clearFocus()
                     isSearchFocused = false
@@ -127,40 +145,62 @@ fun MusicSearchScreen(
                 )
             )
             
-            IconButton(onClick = onNavigateToPlaylists) {
-                Icon(
-                    Icons.AutoMirrored.Filled.PlaylistPlay, 
-                    null, 
-                    modifier = Modifier.size(32.dp), 
-                    tint = primaryColor
-                )
+            // 검색 모드일 때 나타나는 '취소' 버튼 (글자 형태가 더 범용적입니다)
+            if (isSearchFocused || (uiState.searchQuery != lastAppliedQuery)) {
+                TextButton(
+                    onClick = {
+                        // 현재 입력 중인 내용을 버리고 이전 검색 결과(또는 빈 상태)로 복구
+                        viewModel.onSearchQueryChanged(lastAppliedQuery)
+                        focusManager.clearFocus()
+                        isSearchFocused = false
+                        keyboardController?.hide()
+                    },
+                    modifier = Modifier.padding(start = 4.dp)
+                ) {
+                    Text("취소", color = primaryColor)
+                }
+            } else {
+                // 평상시 플레이리스트 아이콘
+                IconButton(onClick = onNavigateToPlaylists, modifier = Modifier.padding(start = 4.dp)) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.PlaylistPlay, 
+                        null, 
+                        modifier = Modifier.size(32.dp), 
+                        tint = primaryColor
+                    )
+                }
             }
         }
         
-        // 리스트 영역 자체에 상하단 마진을 동일하게 부여하여 대칭 확보
         Box(
             modifier = Modifier
                 .weight(1f)
                 .padding(top = 8.dp, bottom = 8.dp) 
         ) {
-            LazyColumn(
-                state = listState,
-                // 내부 패딩은 제거하여 마진에 의해서만 외부 간격이 결정되도록 함
-                contentPadding = PaddingValues(0.dp),
-                modifier = Modifier.fillMaxSize()
-            ) {
-                items(uiState.songs, key = { it.id }) { song ->
-                    SongListItem(
-                        song = song,
-                        onItemClick = { onSongClick(song) },
-                        onMoreClick = {
-                            selectedSongForSheet = song
-                            scope.launch { sheetState.show() }
-                        }
-                    )
+            // 로딩 중일 때 Shimmer 화면 표시 (화면 중앙 로딩 아이콘 제거됨)
+            if (uiState.isLoading) {
+                MusicLoadingScreen()
+            } else {
+                // 데이터 로드 완료 시 리스트 표시
+                LazyColumn(
+                    state = listState,
+                    contentPadding = PaddingValues(0.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(uiState.songs, key = { it.id }) { song ->
+                        SongListItem(
+                            song = song,
+                            onItemClick = { onSongClick(song) },
+                            onMoreClick = {
+                                selectedSongForSheet = song
+                                scope.launch { sheetState.show() }
+                            }
+                        )
+                    }
                 }
             }
 
+            // 검색 포커스 시 최근 검색어 화면 표시
             if (isSearchFocused && uiState.searchQuery.isEmpty() && uiState.recentSearches.isNotEmpty()) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -169,6 +209,7 @@ fun MusicSearchScreen(
                     RecentSearchesView(
                         recentSearches = uiState.recentSearches,
                         onSearchClick = { 
+                            lastAppliedQuery = it
                             viewModel.performSearch(it)
                             focusManager.clearFocus()
                             isSearchFocused = false
@@ -177,10 +218,6 @@ fun MusicSearchScreen(
                         onClearAll = { viewModel.clearAllRecentSearches() }
                     )
                 }
-            }
-
-            if (uiState.isLoading) {
-                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
             }
         }
     }

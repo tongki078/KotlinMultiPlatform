@@ -32,8 +32,11 @@ class MainActivity : ComponentActivity() {
         isVoiceSearching = false
         if (result.resultCode == RESULT_OK) {
             val data = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-            voiceSearchQuery = data?.get(0) ?: ""
-            isVoiceFinal = true // 안드로이드 인텐트 방식은 결과가 오면 무조건 최종 결과임
+            val resultText = data?.get(0) ?: ""
+            if (resultText.isNotEmpty()) {
+                voiceSearchQuery = resultText
+                isVoiceFinal = true // 결과가 오면 명시적으로 최종 상태임을 알림
+            }
         }
     }
 
@@ -88,9 +91,16 @@ class MainActivity : ComponentActivity() {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
             putExtra(RecognizerIntent.EXTRA_PROMPT, "노래 제목이나 아티스트를 말씀하세요")
+            
+            // 말 끝남을 더 빨리 감지하도록 힌트 추가 (안드로이드 버전에 따라 지원 여부 다름)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1000)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500)
         }
         try {
             isVoiceSearching = true
+            isVoiceFinal = false
+            voiceSearchQuery = ""
             voiceSearchLauncher.launch(intent)
         } catch (e: Exception) {
             isVoiceSearching = false
