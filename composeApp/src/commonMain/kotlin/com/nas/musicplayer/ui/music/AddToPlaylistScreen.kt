@@ -31,6 +31,46 @@ fun AddToPlaylistScreen(
 ) {
     val playlists by repository.allPlaylists.collectAsState(emptyList())
     val scope = rememberCoroutineScope()
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var newPlaylistName by remember { mutableStateOf("") }
+
+    if (showCreateDialog) {
+        AlertDialog(
+            onDismissRequest = { showCreateDialog = false },
+            title = { Text("새 플레이리스트") },
+            text = {
+                TextField(
+                    value = newPlaylistName,
+                    onValueChange = { newPlaylistName = it },
+                    placeholder = { Text("플레이리스트 이름") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (newPlaylistName.isNotBlank()) {
+                            scope.launch {
+                                val id = repository.createPlaylist(newPlaylistName)
+                                repository.addSongToPlaylist(id.toInt(), song)
+                                showCreateDialog = false
+                                newPlaylistName = ""
+                                onPlaylistSelected()
+                            }
+                        }
+                    }
+                ) {
+                    Text("생성")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateDialog = false }) {
+                    Text("취소")
+                }
+            }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -66,7 +106,7 @@ fun AddToPlaylistScreen(
                             }
                         }
                     },
-                    modifier = Modifier.clickable { /* TODO: Create Playlist */ }
+                    modifier = Modifier.clickable { showCreateDialog = true }
                 )
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp, color = Color.LightGray.copy(alpha = 0.3f))
             }
