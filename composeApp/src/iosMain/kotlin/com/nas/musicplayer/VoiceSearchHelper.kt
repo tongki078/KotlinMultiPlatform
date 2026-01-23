@@ -21,6 +21,7 @@ class VoiceSearchHelper(
     private var currentTranscript = ""
 
     fun startListening() {
+        println("VoiceSearchHelper: startListening called")
         if (speechRecognizer == null || !speechRecognizer.isAvailable()) {
             onError("음성 인식기를 사용할 수 없습니다.")
             return
@@ -37,7 +38,7 @@ class VoiceSearchHelper(
                     try {
                         setupAudioSessionForRecording()
                         startRecognition()
-                        startTimeoutTimer(7.0) // 7초 자동 종료
+                        startTimeoutTimer(5.0) 
                     } catch (e: Exception) {
                         onError("시작 오류: ${e.message}")
                     }
@@ -55,8 +56,11 @@ class VoiceSearchHelper(
             repeats = false,
             block = { _ ->
                 dispatch_async(dispatch_get_main_queue()) {
-                    // 타임아웃 시 현재까지의 결과를 최종으로 전달하고 종료
-                    onResult(currentTranscript, true)
+                    println("VoiceSearchHelper: Timeout reached. Current transcript: '$currentTranscript'")
+                    if (currentTranscript.isNotBlank()) {
+                        // 타임아웃 시 currentTranscript를 명시적으로 전달
+                        onResult(currentTranscript, true)
+                    }
                     stopListening()
                 }
             }
@@ -77,7 +81,9 @@ class VoiceSearchHelper(
                 error = null)
             audioSession.setMode(AVAudioSessionModeMeasurement, error = null)
             audioSession.setActive(true, error = null)
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            println("VoiceSearchHelper: AudioSession setup error: ${e.message}")
+        }
     }
 
     private fun startRecognition() {
@@ -104,13 +110,30 @@ class VoiceSearchHelper(
         recognitionTask = speechRecognizer?.recognitionTaskWithRequest(recognitionRequest!!) { result: SFSpeechRecognitionResult?, error: NSError? ->
             dispatch_async(dispatch_get_main_queue()) {
                 if (result != null) {
-                    currentTranscript = result.bestTranscription.formattedString
-                    onResult(currentTranscript, result.isFinal())
-                    if (result.isFinal()) {
+                    val newText = result.bestTranscription.formattedString
+                    val isFinal = result.isFinal()
+                    
+                    if (newText.isNotBlank()) {
+                        currentTranscript = newText
+                    }
+                    
+                    println("VoiceSearchHelper: Result received - '$newText' (Total: '$currentTranscript'), isFinal: $isFinal")
+                    
+                    // 핵심: isFinal인데 텍스트가 비어있으면 currentTranscript를 대신 보냄
+                    val textToSend = if (isFinal && newText.isBlank()) currentTranscript else newText
+                    
+                    if (textToSend.isNotBlank() || isFinal) {
+                        onResult(textToSend, isFinal)
+                    }
+                    
+                    if (!isFinal) {
+                        startTimeoutTimer(3.0)
+                    } else {
                         stopListening()
                     }
                 }
                 if (error != null) {
+                    println("VoiceSearchHelper: Error - ${error.localizedDescription}")
                     stopListening()
                 }
             }
@@ -118,6 +141,7 @@ class VoiceSearchHelper(
     }
 
     fun stopListening() {
+        println("VoiceSearchHelper: stopListening called")
         timeoutTimer?.invalidate()
         timeoutTimer = null
 

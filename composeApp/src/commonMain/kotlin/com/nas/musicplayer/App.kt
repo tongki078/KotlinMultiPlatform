@@ -21,6 +21,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.nas.musicplayer.ui.music.*
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,15 +39,43 @@ fun App(
         factory = MusicSearchViewModel.Factory(musicRepository)
     )
     
-    // 음성 검색 결과 처리 (실시간 반영 및 최종 검색)
-    LaunchedEffect(voiceQuery, isVoiceFinal, isVoiceSearching) {
+    // 음성 검색 통합 처리 로직
+    // 인식이 완료되었을 때 검색 수행
+    LaunchedEffect(isVoiceFinal, voiceQuery) {
         if (isVoiceFinal) {
-            if (voiceQuery.isNotEmpty()) {
+            if (voiceQuery.isNotBlank()) {
+                println("VoiceSearchDebug: Final query executing - '$voiceQuery'")
                 searchViewModel.performSearch(voiceQuery)
+                onVoiceQueryConsumed()
+            } else {
+                // 종료 신호는 왔는데 텍스트가 없는 경우, 최대 1.5초까지 0.5초 간격으로 끈질기게 재시도
+                println("VoiceSearchDebug: Final state reached but query blank. Retrying...")
+                var retryCount = 0
+                // 루프 내부에서 voiceQuery의 최신값을 계속 확인해야 함
+                while (retryCount < 3 && voiceQuery.isBlank() && isVoiceFinal) {
+                    delay(500)
+                    retryCount++
+                    println("VoiceSearchDebug: Retry $retryCount (query: '$voiceQuery')...")
+                }
+                
+                // 루프를 다 돌았는데도 (혹은 루프 도중 검색어가 채워졌는데) 여전히 비어있다면 종료
+                if (isVoiceFinal && voiceQuery.isBlank() && retryCount >= 3) {
+                    println("VoiceSearchDebug: Giving up after retries. Consuming state.")
+                    onVoiceQueryConsumed()
+                } else if (isVoiceFinal && voiceQuery.isNotBlank()) {
+                    // 루프 도중 검색어가 채워진 경우
+                    println("VoiceSearchDebug: Query recovered during retry - '$voiceQuery'")
+                    searchViewModel.performSearch(voiceQuery)
+                    onVoiceQueryConsumed()
+                }
             }
-            onVoiceQueryConsumed() 
-        } else if (isVoiceSearching && voiceQuery.isNotEmpty()) {
-            // 사용자가 말하는 도중에 실시간으로 검색창에 텍스트 표시
+        }
+    }
+
+    // 사용자가 말하는 도중에 실시간으로 검색창에 텍스트 표시
+    LaunchedEffect(voiceQuery, isVoiceSearching) {
+        if (isVoiceSearching && !isVoiceFinal && voiceQuery.isNotBlank()) {
+            println("VoiceSearchDebug: Partial query update - '$voiceQuery'")
             searchViewModel.onSearchQueryChanged(voiceQuery)
         }
     }

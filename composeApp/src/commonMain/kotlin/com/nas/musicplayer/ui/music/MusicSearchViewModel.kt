@@ -62,7 +62,6 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, searchQuery = "") }
             try {
-                // Top 100 데이터도 검색 결과와 동일하게 정제 로직을 거치도록 수정
                 val top100Songs = musicApiService.getTop100().toSongList()
                     .filter { !it.isDir }
                     .map { cleanSongInfo(it) }
@@ -74,42 +73,43 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
     }
 
     fun performSearch(query: String = _uiState.value.searchQuery) {
-        if (query.isBlank()) {
+        println("MusicSearchViewModel: performSearch entry - query: '$query'")
+        
+        // 음성 인식 결과의 앞뒤 공백 및 마침표 제거
+        val trimmedQuery = query.trim().replace(Regex("\\.$"), "")
+        println("MusicSearchViewModel: trimmed query: '$trimmedQuery'")
+
+        if (trimmedQuery.isBlank()) {
+            println("MusicSearchViewModel: Query is blank, loading top 100")
             loadTop100()
             return
         }
         
-        _uiState.update { it.copy(searchQuery = query) }
+        _uiState.update { it.copy(searchQuery = trimmedQuery, isLoading = true) }
 
         viewModelScope.launch {
-            // 현재 시간을 밀리초 단위로 가져와 저장
             val timestamp = Clock.System.now().toEpochMilliseconds()
-            repository.addRecentSearch(query, timestamp)
+            repository.addRecentSearch(trimmedQuery, timestamp)
 
-            _uiState.update { it.copy(isLoading = true) }
             try {
-                val searchResult = musicApiService.search(query).toSongList()
+                println("MusicSearchViewModel: Fetching results from API for '$trimmedQuery'")
+                val searchResult = musicApiService.search(trimmedQuery).toSongList()
                     .filter { !it.isDir }
                     .map { cleanSongInfo(it) }
+                println("MusicSearchViewModel: Found ${searchResult.size} results")
                 _uiState.update { it.copy(songs = searchResult, isLoading = false) }
             } catch (e: Exception) {
+                println("MusicSearchViewModel: Search error - ${e.message}")
                 _uiState.update { it.copy(isLoading = false) }
             }
         }
     }
 
-    /**
-     * 경로와 파일명에서 실제 아티스트와 제목을 정밀하게 추출하는 로직
-     */
     private fun cleanSongInfo(song: Song): Song {
         val fileName = song.name ?: ""
-        // 1. 확장자 제거
         var cleanName = fileName.replace(Regex("\\.(mp3|flac|m4a|wav)$", RegexOption.IGNORE_CASE), "").trim()
-        
-        // 2. 앞쪽의 트랙 번호 제거 (예: "084. ", "01-", "1. ")
         cleanName = cleanName.replace(Regex("^\\d+[.\\-_\\s]+"), "").trim()
 
-        // 3. "가수 - 제목" 형식 파싱
         val cleanedSong = if (cleanName.contains(" - ")) {
             val parts = cleanName.split(" - ", limit = 2)
             val artistPart = parts[0].trim()
@@ -121,7 +121,6 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
                 albumName = extractAlbumName(song)
             )
         } else {
-            // 형식이 아닐 경우 폴더명 활용
             val folderInfo = extractAlbumAndArtistFromPath(song)
             song.copy(
                 name = cleanName,
@@ -130,7 +129,6 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
             )
         }
 
-        // Top 100 등 id가 0으로 오는 경우 재생 리스트 인덱싱을 위해 고유 ID 생성
         return if (cleanedSong.id == 0L) {
             cleanedSong.copy(id = (cleanedSong.streamUrl ?: cleanedSong.name).hashCode().toLong())
         } else {
@@ -145,7 +143,6 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
     private fun extractAlbumAndArtistFromPath(song: Song): Pair<String, String> {
         val pathParts = song.parentPath?.split("/")?.filter { it.isNotBlank() } ?: emptyList()
         val lastFolder = pathParts.lastOrNull() ?: "Unknown"
-        // MUSIC/국내/가수명/앨범명 형태일 경우 대응
         return if (pathParts.size >= 2) {
             Pair(pathParts[pathParts.size - 2], lastFolder)
         } else {

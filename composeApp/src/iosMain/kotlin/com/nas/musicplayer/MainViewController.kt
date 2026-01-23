@@ -18,15 +18,23 @@ fun MainViewController() = ComposeUIViewController {
     val voiceHelper = remember { 
         VoiceSearchHelper(
             onResult = { text, final -> 
-                voiceQuery = text
-                isVoiceFinal = final
                 if (final) {
+                    println("iOS MainVC: Final result received. Text: '$text'")
+                    if (text.isNotBlank()) {
+                        voiceQuery = text
+                    }
+                    isVoiceFinal = true
                     isVoiceSearching = false
+                } else {
+                    if (text.isNotBlank()) {
+                        voiceQuery = text
+                    }
                 }
             },
             onError = { 
                 println("iOS Voice Search Error: $it")
                 isVoiceSearching = false
+                isVoiceFinal = true // 에러 시에도 종료 상태로 만들어 대기 해제
             }
         )
     }

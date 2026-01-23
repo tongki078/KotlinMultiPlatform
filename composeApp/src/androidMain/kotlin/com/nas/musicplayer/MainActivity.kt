@@ -113,9 +113,7 @@ class MainActivity : ComponentActivity() {
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {
-                isVoiceSearching = false
-            }
+            override fun onEndOfSpeech() {}
 
             override fun onError(error: Int) {
                 isVoiceSearching = false
@@ -127,6 +125,7 @@ class MainActivity : ComponentActivity() {
                 if (!matches.isNullOrEmpty()) {
                     voiceSearchQuery = matches[0]
                 }
+                isVoiceSearching = false
                 isVoiceFinal = true
             }
 
