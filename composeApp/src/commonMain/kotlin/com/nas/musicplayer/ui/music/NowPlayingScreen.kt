@@ -15,6 +15,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.automirrored.rounded.VolumeDown
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.*
@@ -37,17 +38,20 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
-import com.nas.musicplayer.MusicPlayerViewModel
-import com.nas.musicplayer.Song
-import kotlin.math.roundToInt
+import com.nas.musicplayer.*
+import kotlinx.coroutines.launch
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.Airplay
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NowPlayingScreen(
     viewModel: MusicPlayerViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onNavigateToArtist: (Artist) -> Unit,
+    onNavigateToAlbum: (Album) -> Unit,
+    onNavigateToAddToPlaylist: (Song) -> Unit
 ) {
     val song by viewModel.currentSong.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
@@ -60,6 +64,10 @@ fun NowPlayingScreen(
     var isLyricsMode by remember { mutableStateOf(false) }
     var offsetY by remember { mutableStateOf(0f) }
     val dismissThreshold = 400f
+
+    val scope = rememberCoroutineScope()
+    val sheetState = rememberModalBottomSheetState()
+    var showMoreSheet by remember { mutableStateOf(false) }
 
     val draggableState = rememberDraggableState { delta ->
         val newOffset = offsetY + delta
@@ -83,7 +91,6 @@ fun NowPlayingScreen(
         }
     }
 
-    // 앨범 아트 스케일
     val albumArtScale by animateFloatAsState(targetValue = if (isPlaying) 1f else 0.92f, label = "albumArtScale")
 
     Box(
@@ -99,7 +106,6 @@ fun NowPlayingScreen(
             )
             .offset { IntOffset(0, offsetY.roundToInt()) }
     ) {
-        // 배경 블러 처리
         AsyncImage(
             model = song?.metaPoster ?: song?.streamUrl,
             contentDescription = null,
@@ -109,14 +115,13 @@ fun NowPlayingScreen(
 
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .systemBarsPadding(),
+                .fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // 1. Top Bar
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .statusBarsPadding()
                     .padding(horizontal = 20.dp)
                     .height(48.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -126,12 +131,11 @@ fun NowPlayingScreen(
                     Icon(Icons.Rounded.KeyboardArrowDown, null, modifier = Modifier.size(32.dp), tint = Color.White)
                 }
                 Box(modifier = Modifier.size(36.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha = 0.3f)))
-                IconButton(onClick = { /* More */ }) {
+                IconButton(onClick = { showMoreSheet = true }) {
                     Icon(Icons.Rounded.MoreHoriz, null, tint = Color.White)
                 }
             }
 
-            // 2. Center Content
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -181,10 +185,10 @@ fun NowPlayingScreen(
                 }
             }
 
-            // 3. Info & Controls Section
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .navigationBarsPadding()
                     .padding(horizontal = 32.dp)
             ) {
                 AnimatedVisibility(
@@ -255,7 +259,6 @@ fun NowPlayingScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // 4. Controls
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -280,7 +283,6 @@ fun NowPlayingScreen(
                     }
                 }
 
-                // 5. Volume
                 AnimatedVisibility(
                     visible = !isLyricsMode,
                     enter = fadeIn() + expandVertically(),
@@ -315,9 +317,67 @@ fun NowPlayingScreen(
             }
         }
     }
-}
 
-data class LyricsLine(val timeMs: Long, val text: String, val isSynced: Boolean = true)
+    if (showMoreSheet && song != null) {
+        ModalBottomSheet(
+            onDismissRequest = { showMoreSheet = false },
+            sheetState = sheetState,
+            containerColor = Color(0xFF1C1C1E),
+            contentColor = Color.White
+        ) {
+            val currentSong = song!!
+            Column(modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp)) {
+                ListItem(
+                    headlineContent = { Text(currentSong.name ?: "", color = Color.White) },
+                    supportingContent = { Text(currentSong.artist, color = Color.Gray) },
+                    leadingContent = { 
+                        AsyncImage(
+                            model = currentSong.metaPoster ?: currentSong.streamUrl, 
+                            contentDescription = null, 
+                            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)), 
+                            contentScale = ContentScale.Crop
+                        ) 
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+                HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+                ListItem(
+                    headlineContent = { Text("플레이리스트에 추가", color = Color.White) },
+                    leadingContent = { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, null, tint = Color.White) },
+                    modifier = Modifier.clickable { 
+                        scope.launch { sheetState.hide() }.invokeOnCompletion {
+                            showMoreSheet = false
+                            onNavigateToAddToPlaylist(currentSong)
+                        }
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+                ListItem(
+                    headlineContent = { Text("아티스트 보기", color = Color.White) },
+                    leadingContent = { Icon(Icons.Rounded.Person, null, tint = Color.White) },
+                    modifier = Modifier.clickable { 
+                        scope.launch { sheetState.hide() }.invokeOnCompletion {
+                            showMoreSheet = false
+                            onNavigateToArtist(Artist(name = currentSong.artist))
+                        }
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+                ListItem(
+                    headlineContent = { Text("앨범 보기", color = Color.White) },
+                    leadingContent = { Icon(Icons.Rounded.Album, null, tint = Color.White) },
+                    modifier = Modifier.clickable { 
+                        scope.launch { sheetState.hide() }.invokeOnCompletion {
+                            showMoreSheet = false
+                            onNavigateToAlbum(Album(name = currentSong.albumName, artist = currentSong.artist))
+                        }
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+            }
+        }
+    }
+}
 
 @Composable
 fun LyricsView(song: Song?, currentPosition: Long) {
@@ -333,7 +393,6 @@ fun LyricsView(song: Song?, currentPosition: Long) {
 
     val activeLineIndex = remember(adjustedPosition, parsedLyrics) {
         if (parsedLyrics.isEmpty()) return@remember -1
-        // 실제 싱크 정보가 있는 가사들 중에서만 현재 위치를 찾음 (점프 현상 방지)
         val index = parsedLyrics.indexOfLast { it.isSynced && it.timeMs <= adjustedPosition }
         if (index == -1) 0 else index
     }
@@ -432,7 +491,7 @@ private fun parseLrc(lrcContent: String?): List<LyricsLine> {
             }
         } else {
             val text = line.trim()
-            if (text.isNotEmpty() && !text.startsWith("[")) { // 메타데이터 제외
+            if (text.isNotEmpty() && !text.startsWith("[")) {
                 lastKnownTimeMs += 1 
                 lines.add(LyricsLine(lastKnownTimeMs, text, isSynced = false))
             }
@@ -447,3 +506,5 @@ private fun formatTime(ms: Long): String {
     val seconds = totalSeconds % 60
     return "${minutes}:${seconds.toString().padStart(2, '0')}"
 }
+
+data class LyricsLine(val timeMs: Long, val text: String, val isSynced: Boolean = true)

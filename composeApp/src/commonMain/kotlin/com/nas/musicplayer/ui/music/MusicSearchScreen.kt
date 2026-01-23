@@ -8,9 +8,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
@@ -29,6 +31,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -87,11 +90,11 @@ fun MusicSearchScreen(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
-            // 외부 터치 시 포커스 해제 및 키보드 닫기 구현
+            .navigationBarsPadding()
+            .imePadding()
             .pointerInput(Unit) {
                 detectTapGestures(onTap = {
                     if (isSearchFocused) {
-                        // 입력 중이던 텍스트를 마지막 검색 결과 상태로 복구
                         viewModel.onSearchQueryChanged(lastAppliedQuery)
                         focusManager.clearFocus()
                         isSearchFocused = false
@@ -145,11 +148,9 @@ fun MusicSearchScreen(
                 )
             )
             
-            // 검색 모드일 때 나타나는 '취소' 버튼 (글자 형태가 더 범용적입니다)
             if (isSearchFocused || (uiState.searchQuery != lastAppliedQuery)) {
                 TextButton(
                     onClick = {
-                        // 현재 입력 중인 내용을 버리고 이전 검색 결과(또는 빈 상태)로 복구
                         viewModel.onSearchQueryChanged(lastAppliedQuery)
                         focusManager.clearFocus()
                         isSearchFocused = false
@@ -160,7 +161,6 @@ fun MusicSearchScreen(
                     Text("취소", color = primaryColor)
                 }
             } else {
-                // 평상시 플레이리스트 아이콘
                 IconButton(onClick = onNavigateToPlaylists, modifier = Modifier.padding(start = 4.dp)) {
                     Icon(
                         Icons.AutoMirrored.Filled.PlaylistPlay, 
@@ -177,30 +177,60 @@ fun MusicSearchScreen(
                 .weight(1f)
                 .padding(top = 8.dp, bottom = 8.dp) 
         ) {
-            // 로딩 중일 때 Shimmer 화면 표시 (화면 중앙 로딩 아이콘 제거됨)
-            if (uiState.isLoading) {
-                MusicLoadingScreen()
-            } else {
-                // 데이터 로드 완료 시 리스트 표시
-                LazyColumn(
-                    state = listState,
-                    contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    items(uiState.songs, key = { it.id }) { song ->
-                        SongListItem(
-                            song = song,
-                            onItemClick = { onSongClick(song) },
-                            onMoreClick = {
-                                selectedSongForSheet = song
-                                scope.launch { sheetState.show() }
-                            }
+            when {
+                uiState.isLoading -> {
+                    MusicLoadingScreen()
+                }
+                uiState.songs.isEmpty() && uiState.searchQuery.isNotEmpty() && !isSearchFocused -> {
+                    // 검색 결과가 없을 때 표시할 화면 (애플 뮤직 스타일)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 32.dp)
+                            .verticalScroll(rememberScrollState()),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SearchOff,
+                            contentDescription = null,
+                            modifier = Modifier.size(64.dp),
+                            tint = Color.LightGray
                         )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "결과 없음",
+                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "'${uiState.searchQuery}'에 대한 결과를 찾을 수 없습니다. 철자를 확인하거나 다른 검색어를 입력해 보세요.",
+                            style = MaterialTheme.typography.bodyMedium.copy(color = Color.Gray),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+                else -> {
+                    LazyColumn(
+                        state = listState,
+                        contentPadding = PaddingValues(bottom = 16.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        items(uiState.songs, key = { it.id }) { song ->
+                            SongListItem(
+                                song = song,
+                                onItemClick = { onSongClick(song) },
+                                onMoreClick = {
+                                    selectedSongForSheet = song
+                                    scope.launch { sheetState.show() }
+                                }
+                            )
+                        }
                     }
                 }
             }
 
-            // 검색 포커스 시 최근 검색어 화면 표시
             if (isSearchFocused && uiState.searchQuery.isEmpty() && uiState.recentSearches.isNotEmpty()) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -264,7 +294,10 @@ fun RecentSearchesView(
     onClearAll: () -> Unit
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 16.dp)
+    ) {
         item {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),

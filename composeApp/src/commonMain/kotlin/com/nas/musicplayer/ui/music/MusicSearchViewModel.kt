@@ -61,6 +61,7 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, searchQuery = "") }
             try {
+                // Top 100 데이터도 검색 결과와 동일하게 정제 로직을 거치도록 수정
                 val top100Songs = musicApiService.getTop100().toSongList()
                     .filter { !it.isDir }
                     .map { cleanSongInfo(it) }
@@ -105,7 +106,7 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         cleanName = cleanName.replace(Regex("^\\d+[.\\-_\\s]+"), "").trim()
 
         // 3. "가수 - 제목" 형식 파싱
-        return if (cleanName.contains(" - ")) {
+        val cleanedSong = if (cleanName.contains(" - ")) {
             val parts = cleanName.split(" - ", limit = 2)
             val artistPart = parts[0].trim()
             val titlePart = parts[1].trim()
@@ -123,6 +124,13 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
                 artist = folderInfo.first,
                 albumName = folderInfo.second
             )
+        }
+
+        // Top 100 등 id가 0으로 오는 경우 재생 리스트 인덱싱을 위해 고유 ID 생성
+        return if (cleanedSong.id == 0L) {
+            cleanedSong.copy(id = (cleanedSong.streamUrl ?: cleanedSong.name).hashCode().toLong())
+        } else {
+            cleanedSong
         }
     }
 

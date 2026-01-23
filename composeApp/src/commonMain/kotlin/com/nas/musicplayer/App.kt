@@ -2,22 +2,16 @@ package com.nas.musicplayer
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -50,15 +44,10 @@ fun App(
 
     val currentSong by musicPlayerViewModel.currentSong.collectAsState()
     val isPlaying by musicPlayerViewModel.isPlaying.collectAsState()
-    val allPlaylists by musicRepository.allPlaylists.collectAsState(emptyList())
 
-    // iOS 경로 인자 크래시를 방지하기 위한 공유 상태 (가장 안전한 방식)
+    // iOS 경로 인자 크래시를 방지하기 위한 공유 상태
     var selectedAlbumForDetail by remember { mutableStateOf<Album?>(null) }
     var selectedArtistForDetail by remember { mutableStateOf<Artist?>(null) }
-
-    // 플레이리스트 추가 바텀 시트 상태
-    val addToPlaylistSheetState = rememberModalBottomSheetState()
-    val scope = rememberCoroutineScope()
     var songToAddToPlaylist by remember { mutableStateOf<Song?>(null) }
 
     LaunchedEffect(voiceQuery, isVoiceFinal) {
@@ -79,7 +68,8 @@ fun App(
                 val route = currentRoute ?: ""
                 val isPlayerOrDetail = route == "player" || 
                                      route == "album_detail" || 
-                                     route == "artist_detail"
+                                     route == "artist_detail" ||
+                                     route == "add_to_playlist"
                 
                 if (!isPlayerOrDetail) {
                     Column {
@@ -121,10 +111,11 @@ fun App(
             }
         ) { innerPadding ->
             val bottomPadding = innerPadding.calculateBottomPadding()
-            val totalBottomPadding = if (currentRoute != "player" && currentSong != null) {
-                bottomPadding + miniPlayerHeight
+            // player나 add_to_playlist 화면일 때는 하단 패딩을 0으로 설정하여 전체 화면을 사용하게 함
+            val totalBottomPadding = if (currentRoute != "player" && currentRoute != "add_to_playlist") {
+                if (currentSong != null) bottomPadding + miniPlayerHeight else bottomPadding
             } else {
-                bottomPadding
+                0.dp
             }
 
             Box(modifier = Modifier.fillMaxSize().padding(bottom = totalBottomPadding)) {
@@ -135,18 +126,16 @@ fun App(
                             onSongClick = { song -> musicPlayerViewModel.playSong(song, searchViewModel.uiState.value.songs) },
                             onNavigateToPlaylists = { navController.navigate("playlists") },
                             onNavigateToArtist = { artist ->
-                                // 인자 없이 상태를 먼저 설정한 뒤 고정 경로로 이동하여 iOS 크래시 방지
                                 selectedArtistForDetail = artist.copy(popularSongs = searchViewModel.uiState.value.songs.filter { it.artist == artist.name })
                                 navController.navigate("artist_detail")
                             },
                             onNavigateToAlbum = { album ->
-                                val albumWithSongs = album.copy(songs = searchViewModel.uiState.value.songs.filter { it.albumName == album.name })
-                                selectedAlbumForDetail = albumWithSongs
+                                selectedAlbumForDetail = album.copy(songs = searchViewModel.uiState.value.songs.filter { it.albumName == album.name })
                                 navController.navigate("album_detail")
                             },
                             onNavigateToAddToPlaylist = { song ->
                                 songToAddToPlaylist = song
-                                scope.launch { addToPlaylistSheetState.show() }
+                                navController.navigate("add_to_playlist")
                             },
                             onVoiceSearchClick = onVoiceSearchClick,
                             isVoiceSearching = isVoiceSearching
@@ -161,7 +150,7 @@ fun App(
                             },
                             onNavigateToAddToPlaylist = { song ->
                                 songToAddToPlaylist = song
-                                scope.launch { addToPlaylistSheetState.show() }
+                                navController.navigate("add_to_playlist")
                             },
                             onNavigateToPlaylists = { navController.navigate("playlists") },
                             onNavigateToArtist = { artist -> 
@@ -228,12 +217,40 @@ fun App(
                         }
                     }
                     composable("player") {
-                        NowPlayingScreen(viewModel = musicPlayerViewModel, onBack = { navController.popBackStack() })
+                        NowPlayingScreen(
+                            viewModel = musicPlayerViewModel,
+                            onBack = { navController.popBackStack() },
+                            onNavigateToArtist = { artist ->
+                                selectedArtistForDetail = artist
+                                navController.navigate("artist_detail")
+                            },
+                            onNavigateToAlbum = { album ->
+                                selectedAlbumForDetail = album
+                                navController.navigate("album_detail")
+                            },
+                            onNavigateToAddToPlaylist = { song ->
+                                songToAddToPlaylist = song
+                                navController.navigate("add_to_playlist")
+                            }
+                        )
+                    }
+                    composable("add_to_playlist") {
+                        songToAddToPlaylist?.let { song ->
+                            AddToPlaylistScreen(
+                                song = song,
+                                repository = musicRepository,
+                                onBack = { navController.popBackStack() },
+                                onPlaylistSelected = { 
+                                    navController.popBackStack() 
+                                    songToAddToPlaylist = null
+                                }
+                            )
+                        }
                     }
                 }
             }
 
-            if (currentRoute != "player") {
+            if (currentRoute != "player" && currentRoute != "add_to_playlist") {
                 currentSong?.let { song ->
                     Box(modifier = Modifier.fillMaxSize().padding(bottom = bottomPadding)) {
                         Box(modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(horizontal = 8.dp, vertical = 4.dp)) {
@@ -243,45 +260,6 @@ fun App(
                                 onTogglePlay = { musicPlayerViewModel.togglePlayPause() },
                                 onNextClick = { musicPlayerViewModel.playNext() },
                                 onClick = { navController.navigate("player") }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // 애플뮤직 스타일 플레이리스트 추가 바텀 시트
-        if (songToAddToPlaylist != null) {
-            ModalBottomSheet(
-                onDismissRequest = { songToAddToPlaylist = null },
-                sheetState = addToPlaylistSheetState,
-                containerColor = MaterialTheme.colorScheme.surface
-            ) {
-                Column(modifier = Modifier.fillMaxWidth().padding(bottom = 48.dp)) {
-                    Text(
-                        "플레이리스트에 추가",
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                        modifier = Modifier.padding(20.dp)
-                    )
-                    LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp)) {
-                        item {
-                            ListItem(
-                                headlineContent = { Text("새 플레이리스트...", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) },
-                                leadingContent = { Icon(Icons.Default.Add, null, tint = MaterialTheme.colorScheme.primary) },
-                                modifier = Modifier.clickable { /* TODO */ }
-                            )
-                        }
-                        items(allPlaylists) { playlist ->
-                            ListItem(
-                                headlineContent = { Text(playlist.name, fontWeight = FontWeight.Medium) },
-                                supportingContent = { Text("${playlist.songs.size}곡") },
-                                leadingContent = { Icon(Icons.Default.LibraryMusic, null, tint = Color.Gray) },
-                                modifier = Modifier.clickable {
-                                    scope.launch {
-                                        musicRepository.addSongToPlaylist(playlist.id, songToAddToPlaylist!!)
-                                        addToPlaylistSheetState.hide()
-                                    }.invokeOnCompletion { songToAddToPlaylist = null }
-                                }
                             )
                         }
                     }

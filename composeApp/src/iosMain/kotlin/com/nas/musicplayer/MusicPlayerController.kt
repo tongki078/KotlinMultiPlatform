@@ -60,20 +60,28 @@ actual class MusicPlayerController {
     }
 
     actual fun playSong(song: Song, playlist: List<Song>) {
-        val urlString = song.streamUrl ?: return
+        val streamUrl = song.streamUrl ?: return
+        println("iOS PlayRequest - Name: ${song.name}, RawURL: $streamUrl")
         
-        var targetUrl = if (urlString.contains("music.yommi.mywire.org")) {
-            urlString.replace("https://", "http://")
+        // 1. 프로토콜 처리 (특정 도메인 대응)
+        var urlString = if (streamUrl.contains("music.yommi.mywire.org")) {
+            streamUrl.replace("https://", "http://")
         } else {
-            urlString
-        }
-        targetUrl = targetUrl.replace(" ", "%20")
-
-        if (targetUrl.startsWith("http") && !targetUrl.contains("#")) {
-            targetUrl += "#.aac"
+            streamUrl
         }
 
-        val url = NSURL.URLWithString(targetUrl) ?: return
+        // 2. 안전한 URL 인코딩 (중복 인코딩 방지)
+        val decoded = (urlString as NSString).stringByRemovingPercentEncoding() ?: urlString
+        val allowedChars = NSCharacterSet.URLQueryAllowedCharacterSet().mutableCopy() as NSMutableCharacterSet
+        allowedChars.addCharactersInString(":#") 
+        
+        val encodedUrl = (decoded as NSString).stringByAddingPercentEncodingWithAllowedCharacters(allowedChars) ?: decoded
+
+        val url = NSURL.URLWithString(encodedUrl)
+        if (url == null) {
+            println("iOS Player Error: NSURL conversion failed for $encodedUrl")
+            return
+        }
 
         setupAudioSession()
         
@@ -98,6 +106,7 @@ actual class MusicPlayerController {
         }
         
         player?.automaticallyWaitsToMinimizeStalling = true
+        // 타입 에러 수정: Double 대신 Float 그대로 대입
         player?.volume = _volume.value
 
         _currentSong.value = song
