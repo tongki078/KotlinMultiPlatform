@@ -20,7 +20,6 @@ actual class MusicPlayerController {
     private var playerItemEndOfTimeObserver: Any? = null
     private val mainScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     
-    // 현재 곡의 아트워크 캐시
     private var cachedArtwork: MPMediaItemArtwork? = null
     private var currentArtworkUrl: String? = null
 
@@ -108,7 +107,6 @@ actual class MusicPlayerController {
         player?.play()
         _isPlaying.value = true
         
-        // 새로운 곡 시작 시 캐시 초기화 및 정보 업데이트
         cachedArtwork = null
         currentArtworkUrl = null
         updateNowPlayingInfo(song)
@@ -153,24 +151,25 @@ actual class MusicPlayerController {
         info[MPNowPlayingInfoPropertyPlaybackRate] = if (_isPlaying.value) 1.0 else 0.0
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = _currentPosition.value / 1000.0
         
-        // 캐시된 이미지가 있으면 즉시 사용 (깜빡임 방지)
         cachedArtwork?.let {
             info[MPMediaItemPropertyArtwork] = it
         }
 
         infoCenter.setNowPlayingInfo(info)
 
-        // 이미지 로드 로직 (캐시가 없거나 URL이 바뀐 경우에만)
         val imageUrlString = song.metaPoster ?: song.streamUrl
         if (imageUrlString != null && imageUrlString != currentArtworkUrl) {
             mainScope.launch {
-                val artwork = loadArtwork(imageUrlString)
-                if (artwork != null) {
-                    cachedArtwork = artwork
-                    currentArtworkUrl = imageUrlString
-                    // 이미지가 로드되면 다시 한 번 업데이트
-                    info[MPMediaItemPropertyArtwork] = artwork
-                    infoCenter.setNowPlayingInfo(info)
+                try {
+                    val artwork = loadArtwork(imageUrlString)
+                    if (artwork != null) {
+                        cachedArtwork = artwork
+                        currentArtworkUrl = imageUrlString
+                        info[MPMediaItemPropertyArtwork] = artwork
+                        infoCenter.setNowPlayingInfo(info)
+                    }
+                } catch (e: Exception) {
+                    println("NowPlayingInfo Image Update Error: ${e.message}")
                 }
             }
         }
@@ -179,11 +178,13 @@ actual class MusicPlayerController {
     private suspend fun loadArtwork(url: String): MPMediaItemArtwork? = withContext(Dispatchers.Default) {
         try {
             val nsUrl = if (url.startsWith("/")) NSURL.fileURLWithPath(url) else NSURL.URLWithString(url)
-            val data = NSData.dataWithContentsOfURL(nsUrl!!)
-            if (data != null) {
-                val image = UIImage.imageWithData(data)
-                if (image != null) {
-                    return@withContext MPMediaItemArtwork(boundsSize = image.size) { _ -> image }
+            nsUrl?.let { validUrl ->
+                val data = NSData.dataWithContentsOfURL(validUrl)
+                data?.let { validData ->
+                    val image = UIImage.imageWithData(validData)
+                    image?.let { validImage ->
+                        return@withContext MPMediaItemArtwork(boundsSize = validImage.size) { _ -> validImage }
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -216,7 +217,6 @@ actual class MusicPlayerController {
                 }
             }
             
-            // 재생 시간 업데이트 시에는 이미지를 다시 로드하지 않도록 하여 깜빡임 방지
             val infoCenter = MPNowPlayingInfoCenter.defaultCenter()
             val currentInfo = infoCenter.nowPlayingInfo()?.toMutableMap() ?: mutableMapOf()
             currentInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = _currentPosition.value / 1000.0

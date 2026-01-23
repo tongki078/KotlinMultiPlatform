@@ -1,16 +1,23 @@
 package com.nas.musicplayer
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -19,7 +26,9 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.nas.musicplayer.ui.music.*
+import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun App(
     musicRepository: MusicRepository,
@@ -41,8 +50,17 @@ fun App(
 
     val currentSong by musicPlayerViewModel.currentSong.collectAsState()
     val isPlaying by musicPlayerViewModel.isPlaying.collectAsState()
+    val allPlaylists by musicRepository.allPlaylists.collectAsState(emptyList())
 
-    // 음성 인식 결과 처리 로직
+    // iOS 경로 인자 크래시를 방지하기 위한 공유 상태 (가장 안전한 방식)
+    var selectedAlbumForDetail by remember { mutableStateOf<Album?>(null) }
+    var selectedArtistForDetail by remember { mutableStateOf<Artist?>(null) }
+
+    // 플레이리스트 추가 바텀 시트 상태
+    val addToPlaylistSheetState = rememberModalBottomSheetState()
+    val scope = rememberCoroutineScope()
+    var songToAddToPlaylist by remember { mutableStateOf<Song?>(null) }
+
     LaunchedEffect(voiceQuery, isVoiceFinal) {
         if (voiceQuery.isNotEmpty()) {
             searchViewModel.onSearchQueryChanged(voiceQuery)
@@ -58,25 +76,24 @@ fun App(
     MaterialTheme {
         Scaffold(
             bottomBar = {
-                if (currentRoute != "player") {
+                val route = currentRoute ?: ""
+                val isPlayerOrDetail = route == "player" || 
+                                     route == "album_detail" || 
+                                     route == "artist_detail"
+                
+                if (!isPlayerOrDetail) {
                     Column {
-                        HorizontalDivider(
-                            thickness = 0.5.dp, 
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
-                        )
+                        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                         NavigationBar(
                             containerColor = MaterialTheme.colorScheme.surface,
                             tonalElevation = 0.dp,
-                            // 시스템 바 여백을 제거하여 아이콘을 더 아래로 배치 (잘림 방지 위해 높이는 유지)
                             windowInsets = WindowInsets(0, 0, 0, 0)
                         ) {
                             NavigationBarItem(
-                                selected = currentRoute == "search" || currentRoute == null,
+                                selected = route == "search" || route == "",
                                 onClick = { 
                                     navController.navigate("search") {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
-                                        }
+                                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                                         launchSingleTop = true
                                         restoreState = true
                                     }
@@ -86,12 +103,10 @@ fun App(
                                 alwaysShowLabel = true
                             )
                             NavigationBarItem(
-                                selected = currentRoute == "library" || currentRoute == "playlists" || currentRoute?.startsWith("playlist_detail") == true,
+                                selected = route == "library" || route == "playlists" || route.startsWith("playlist_detail"),
                                 onClick = { 
                                     navController.navigate("library") {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
-                                        }
+                                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                                         launchSingleTop = true
                                         restoreState = true
                                     }
@@ -105,7 +120,6 @@ fun App(
                 }
             }
         ) { innerPadding ->
-            // NavigationBar의 windowInsets를 제거했으므로 padding 계산 시에도 이를 고려
             val bottomPadding = innerPadding.calculateBottomPadding()
             val totalBottomPadding = if (currentRoute != "player" && currentSong != null) {
                 bottomPadding + miniPlayerHeight
@@ -113,26 +127,27 @@ fun App(
                 bottomPadding
             }
 
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = totalBottomPadding)
-            ) {
-                NavHost(
-                    navController = navController, 
-                    startDestination = "search"
-                ) {
+            Box(modifier = Modifier.fillMaxSize().padding(bottom = totalBottomPadding)) {
+                NavHost(navController = navController, startDestination = "search") {
                     composable("search") {
                         MusicSearchScreen(
                             viewModel = searchViewModel,
-                            onSongClick = { song -> 
-                                val currentSongs = searchViewModel.uiState.value.songs
-                                musicPlayerViewModel.playSong(song, currentSongs)
-                            },
+                            onSongClick = { song -> musicPlayerViewModel.playSong(song, searchViewModel.uiState.value.songs) },
                             onNavigateToPlaylists = { navController.navigate("playlists") },
-                            onNavigateToArtist = { /* TODO */ },
-                            onNavigateToAlbum = { /* TODO */ },
-                            onNavigateToAddToPlaylist = { /* TODO */ },
+                            onNavigateToArtist = { artist ->
+                                // 인자 없이 상태를 먼저 설정한 뒤 고정 경로로 이동하여 iOS 크래시 방지
+                                selectedArtistForDetail = artist.copy(popularSongs = searchViewModel.uiState.value.songs.filter { it.artist == artist.name })
+                                navController.navigate("artist_detail")
+                            },
+                            onNavigateToAlbum = { album ->
+                                val albumWithSongs = album.copy(songs = searchViewModel.uiState.value.songs.filter { it.albumName == album.name })
+                                selectedAlbumForDetail = albumWithSongs
+                                navController.navigate("album_detail")
+                            },
+                            onNavigateToAddToPlaylist = { song ->
+                                songToAddToPlaylist = song
+                                scope.launch { addToPlaylistSheetState.show() }
+                            },
                             onVoiceSearchClick = onVoiceSearchClick,
                             isVoiceSearching = isVoiceSearching
                         )
@@ -144,18 +159,25 @@ fun App(
                                 musicPlayerViewModel.playSong(song, list)
                                 navController.navigate("player")
                             },
-                            onNavigateToAddToPlaylist = { /* TODO */ },
+                            onNavigateToAddToPlaylist = { song ->
+                                songToAddToPlaylist = song
+                                scope.launch { addToPlaylistSheetState.show() }
+                            },
                             onNavigateToPlaylists = { navController.navigate("playlists") },
-                            onNavigateToArtist = { /* TODO */ },
-                            onNavigateToAlbum = { /* TODO */ }
+                            onNavigateToArtist = { artist -> 
+                                selectedArtistForDetail = artist.copy(popularSongs = localSongs.filter { it.artist == artist.name })
+                                navController.navigate("artist_detail")
+                            },
+                            onNavigateToAlbum = { album -> 
+                                selectedAlbumForDetail = album.copy(songs = localSongs.filter { it.albumName == album.name })
+                                navController.navigate("album_detail")
+                            }
                         )
                     }
                     composable("playlists") {
                         PlaylistsListScreen(
                             repository = musicRepository,
-                            onPlaylistClick = { id -> 
-                                navController.navigate("playlist_detail/$id")
-                            },
+                            onPlaylistClick = { id -> navController.navigate("playlist_detail/$id") },
                             onBack = { navController.popBackStack() }
                         )
                     }
@@ -164,9 +186,7 @@ fun App(
                         arguments = listOf(navArgument("playlistId") { type = NavType.IntType })
                     ) { backStackEntry ->
                         val playlistId = backStackEntry.arguments?.getInt("playlistId") ?: -1
-                        val playlistViewModel = remember(playlistId) { 
-                            PlaylistViewModel(playlistId, musicRepository) 
-                        }
+                        val playlistViewModel = remember(playlistId) { PlaylistViewModel(playlistId, musicRepository) }
                         PlaylistViewScreen(
                             viewModel = playlistViewModel,
                             playerViewModel = musicPlayerViewModel,
@@ -177,34 +197,93 @@ fun App(
                             onBack = { navController.popBackStack() }
                         )
                     }
+                    composable("album_detail") {
+                        selectedAlbumForDetail?.let { album ->
+                            AlbumDetailScreen(
+                                album = album,
+                                onBack = { navController.popBackStack() },
+                                onSongClick = { song, list ->
+                                    musicPlayerViewModel.playSong(song, list)
+                                    navController.navigate("player")
+                                }
+                            )
+                        }
+                    }
+                    composable("artist_detail") {
+                        selectedArtistForDetail?.let { artist ->
+                            ArtistDetailScreen(
+                                artist = artist,
+                                onBack = { navController.popBackStack() },
+                                onSongClick = { song, list ->
+                                    musicPlayerViewModel.playSong(song, list)
+                                    navController.navigate("player")
+                                },
+                                onPlayAllClick = { list ->
+                                    if (list.isNotEmpty()) {
+                                        musicPlayerViewModel.playSong(list.first(), list)
+                                        navController.navigate("player")
+                                    }
+                                }
+                            )
+                        }
+                    }
                     composable("player") {
-                        NowPlayingScreen(
-                            viewModel = musicPlayerViewModel,
-                            onBack = { navController.popBackStack() }
-                        )
+                        NowPlayingScreen(viewModel = musicPlayerViewModel, onBack = { navController.popBackStack() })
                     }
                 }
             }
 
-            if (currentRoute != "player" && currentSong != null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(bottom = bottomPadding)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.BottomCenter)
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        MiniPlayer(
-                            song = currentSong!!,
-                            isPlaying = isPlaying,
-                            onTogglePlay = { musicPlayerViewModel.togglePlayPause() },
-                            onNextClick = { musicPlayerViewModel.playNext() },
-                            onClick = { navController.navigate("player") }
-                        )
+            if (currentRoute != "player") {
+                currentSong?.let { song ->
+                    Box(modifier = Modifier.fillMaxSize().padding(bottom = bottomPadding)) {
+                        Box(modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(horizontal = 8.dp, vertical = 4.dp)) {
+                            MiniPlayer(
+                                song = song,
+                                isPlaying = isPlaying,
+                                onTogglePlay = { musicPlayerViewModel.togglePlayPause() },
+                                onNextClick = { musicPlayerViewModel.playNext() },
+                                onClick = { navController.navigate("player") }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 애플뮤직 스타일 플레이리스트 추가 바텀 시트
+        if (songToAddToPlaylist != null) {
+            ModalBottomSheet(
+                onDismissRequest = { songToAddToPlaylist = null },
+                sheetState = addToPlaylistSheetState,
+                containerColor = MaterialTheme.colorScheme.surface
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(bottom = 48.dp)) {
+                    Text(
+                        "플레이리스트에 추가",
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                        modifier = Modifier.padding(20.dp)
+                    )
+                    LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp)) {
+                        item {
+                            ListItem(
+                                headlineContent = { Text("새 플레이리스트...", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) },
+                                leadingContent = { Icon(Icons.Default.Add, null, tint = MaterialTheme.colorScheme.primary) },
+                                modifier = Modifier.clickable { /* TODO */ }
+                            )
+                        }
+                        items(allPlaylists) { playlist ->
+                            ListItem(
+                                headlineContent = { Text(playlist.name, fontWeight = FontWeight.Medium) },
+                                supportingContent = { Text("${playlist.songs.size}곡") },
+                                leadingContent = { Icon(Icons.Default.LibraryMusic, null, tint = Color.Gray) },
+                                modifier = Modifier.clickable {
+                                    scope.launch {
+                                        musicRepository.addSongToPlaylist(playlist.id, songToAddToPlaylist!!)
+                                        addToPlaylistSheetState.hide()
+                                    }.invokeOnCompletion { songToAddToPlaylist = null }
+                                }
+                            )
+                        }
                     }
                 }
             }

@@ -186,24 +186,33 @@ fun MusicSearchScreen(
     }
 
     if (selectedSongForSheet != null) {
+        val currentSong = selectedSongForSheet!!
         ModalBottomSheet(
             onDismissRequest = { selectedSongForSheet = null },
             sheetState = sheetState
         ) {
-            val currentSong = selectedSongForSheet!!
             MoreOptionsSheet(
                 song = currentSong,
                 onNavigateToArtist = {
-                    onNavigateToArtist(Artist(name = currentSong.artist))
-                    scope.launch { sheetState.hide() }.invokeOnCompletion { selectedSongForSheet = null }
+                    scope.launch { 
+                        sheetState.hide()
+                        selectedSongForSheet = null
+                        onNavigateToArtist(Artist(name = currentSong.artist))
+                    }
                 },
                 onNavigateToAddToPlaylist = {
-                    onNavigateToAddToPlaylist(it)
-                    scope.launch { sheetState.hide() }.invokeOnCompletion { selectedSongForSheet = null }
+                    scope.launch {
+                        sheetState.hide()
+                        selectedSongForSheet = null
+                        onNavigateToAddToPlaylist(it)
+                    }
                 },
                 onNavigateToAlbum = {
-                    onNavigateToAlbum(Album(name = currentSong.albumName, artist = currentSong.artist))
-                    scope.launch { sheetState.hide() }.invokeOnCompletion { selectedSongForSheet = null }
+                    scope.launch {
+                        sheetState.hide()
+                        selectedSongForSheet = null
+                        onNavigateToAlbum(Album(name = currentSong.albumName, artist = currentSong.artist))
+                    }
                 }
             )
         }
