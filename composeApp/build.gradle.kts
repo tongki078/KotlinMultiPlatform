@@ -27,6 +27,13 @@ kotlin {
             baseName = "ComposeApp"
             isStatic = true
         }
+        
+        // iOS 빌드 시 ExperimentalForeignApi 에러 방지 설정 추가
+        iosTarget.compilations.all {
+            compilerOptions.configure {
+                freeCompilerArgs.add("-opt-in=kotlinx.cinterop.ExperimentalForeignApi")
+            }
+        }
     }
     
     sourceSets {
@@ -37,7 +44,7 @@ kotlin {
             implementation(libs.androidx.media3.exoplayer)
             implementation(libs.androidx.media3.datasource.okhttp)
             implementation(libs.androidx.media3.common)
-            implementation(libs.androidx.media3.session) // MediaSession 추가
+            implementation(libs.androidx.media3.session)
         }
         commonMain.dependencies {
             implementation(compose.runtime)
@@ -62,6 +69,7 @@ kotlin {
             implementation(libs.coil.network.ktor)
             
             implementation(libs.navigation.compose)
+            implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
         }
         iosMain.dependencies {
             implementation(libs.ktor.client.darwin)
@@ -104,11 +112,9 @@ compose.resources {
     packageOfResClass = "com.nas.musicplayer"
 }
 
-// iOS 리소스 동기화 시 Xcode 환경변수가 없을 경우 발생하는 오류 해결
 tasks.matching { it.name == "syncComposeResourcesForIos" }.configureEach {
     val task = this
     try {
-        // Use reflection to access internal task properties
         task.javaClass.getMethod("getXcodeTargetArchs").invoke(task)?.let {
             val p = it as org.gradle.api.provider.ListProperty<*>
             if (!p.isPresent) {
@@ -138,9 +144,7 @@ tasks.matching { it.name == "syncComposeResourcesForIos" }.configureEach {
                 }
             }
         }
-    } catch (e: Exception) {
-        // Reflection failed
-    }
+    } catch (e: Exception) {}
 }
 
 dependencies {

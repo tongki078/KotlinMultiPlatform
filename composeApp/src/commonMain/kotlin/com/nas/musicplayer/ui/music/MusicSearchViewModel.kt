@@ -15,6 +15,7 @@ import com.nas.musicplayer.network.httpClient
 import com.nas.musicplayer.network.toSongList
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.datetime.Clock
 
 data class MusicSearchUiState(
     val songs: List<Song> = emptyList(),
@@ -81,7 +82,10 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         _uiState.update { it.copy(searchQuery = query) }
 
         viewModelScope.launch {
-            repository.addRecentSearch(query)
+            // 현재 시간을 밀리초 단위로 가져와 저장
+            val timestamp = Clock.System.now().toEpochMilliseconds()
+            repository.addRecentSearch(query, timestamp)
+
             _uiState.update { it.copy(isLoading = true) }
             try {
                 val searchResult = musicApiService.search(query).toSongList()

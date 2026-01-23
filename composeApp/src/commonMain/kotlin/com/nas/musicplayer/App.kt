@@ -1,17 +1,18 @@
 package com.nas.musicplayer
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -20,7 +21,6 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.nas.musicplayer.ui.music.*
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,70 +38,97 @@ fun App(
         factory = MusicSearchViewModel.Factory(musicRepository)
     )
     
+    // 음성 검색 결과 처리 (실시간 반영 및 최종 검색)
+    LaunchedEffect(voiceQuery, isVoiceFinal, isVoiceSearching) {
+        if (isVoiceFinal) {
+            if (voiceQuery.isNotEmpty()) {
+                searchViewModel.performSearch(voiceQuery)
+            }
+            onVoiceQueryConsumed() 
+        } else if (isVoiceSearching && voiceQuery.isNotEmpty()) {
+            // 사용자가 말하는 도중에 실시간으로 검색창에 텍스트 표시
+            searchViewModel.onSearchQueryChanged(voiceQuery)
+        }
+    }
+    
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route
+    val currentDestination = navBackStackEntry?.destination
+    val currentRoute = currentDestination?.route
 
-    val currentSong by musicPlayerViewModel.currentSong.collectAsState()
-    val isPlaying by musicPlayerViewModel.isPlaying.collectAsState()
-
-    // iOS 경로 인자 크래시를 방지하기 위한 공유 상태
-    var selectedAlbumForDetail by remember { mutableStateOf<Album?>(null) }
-    var selectedArtistForDetail by remember { mutableStateOf<Artist?>(null) }
-    var songToAddToPlaylist by remember { mutableStateOf<Song?>(null) }
-
-    LaunchedEffect(voiceQuery, isVoiceFinal) {
-        if (voiceQuery.isNotEmpty()) {
-            searchViewModel.onSearchQueryChanged(voiceQuery)
-            if (isVoiceFinal) {
-                searchViewModel.performSearch(voiceQuery)
-                onVoiceQueryConsumed()
+    // 앱이 백그라운드에서 돌아올 때 검색 탭 우선 이동
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (currentRoute != "search" && currentRoute != null) {
+            navController.navigate("search") {
+                val startDest = navController.graph.findStartDestination()
+                popUpTo(startDest.route ?: "search") { saveState = true }
+                launchSingleTop = true
+                restoreState = true
             }
         }
     }
 
-    val miniPlayerHeight = 72.dp
+    val currentSong by musicPlayerViewModel.currentSong.collectAsState()
+    val isPlaying by musicPlayerViewModel.isPlaying.collectAsState()
 
     MaterialTheme {
         Scaffold(
             bottomBar = {
                 val route = currentRoute ?: ""
-                val isPlayerOrDetail = route == "player" || 
-                                     route == "album_detail" || 
-                                     route == "artist_detail" ||
-                                     route == "add_to_playlist"
+                val isFullScreen = route == "player" || route.startsWith("add_to_playlist")
                 
-                if (!isPlayerOrDetail) {
-                    Column {
+                if (!isFullScreen) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        currentSong?.let { song ->
+                            Box(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                                MiniPlayer(
+                                    song = song,
+                                    isPlaying = isPlaying,
+                                    onTogglePlay = { musicPlayerViewModel.togglePlayPause() },
+                                    onNextClick = { musicPlayerViewModel.playNext() },
+                                    onClick = { navController.navigate("player") }
+                                )
+                            }
+                        }
+                        
                         HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                        
                         NavigationBar(
                             containerColor = MaterialTheme.colorScheme.surface,
                             tonalElevation = 0.dp,
                             windowInsets = WindowInsets(0, 0, 0, 0)
                         ) {
                             NavigationBarItem(
-                                selected = route == "search" || route == "",
+                                selected = currentDestination?.hierarchy?.any { it.route == "search" } == true,
                                 onClick = { 
                                     navController.navigate("search") {
-                                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                        val startDest = navController.graph.findStartDestination()
+                                        popUpTo(startDest.route ?: "search") { saveState = true }
                                         launchSingleTop = true
                                         restoreState = true
                                     }
                                 },
-                                icon = { Icon(Icons.Default.Search, "Search", modifier = Modifier.size(26.dp)) },
+                                icon = { Icon(Icons.Default.Search, null, modifier = Modifier.size(26.dp)) },
                                 label = { Text("검색", fontSize = 12.sp) },
                                 alwaysShowLabel = true
                             )
+                            
+                            val isLibrarySelected = currentDestination?.hierarchy?.any { it.route in listOf("library", "playlists") } == true ||
+                                                   route.startsWith("playlist_detail") || 
+                                                   route.startsWith("album_detail") || 
+                                                   route.startsWith("artist_detail")
+
                             NavigationBarItem(
-                                selected = route == "library" || route == "playlists" || route.startsWith("playlist_detail"),
+                                selected = isLibrarySelected,
                                 onClick = { 
                                     navController.navigate("library") {
-                                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                        val startDest = navController.graph.findStartDestination()
+                                        popUpTo(startDest.route ?: "search") { saveState = true }
                                         launchSingleTop = true
                                         restoreState = true
                                     }
                                 },
-                                icon = { Icon(Icons.Default.LibraryMusic, "Library", modifier = Modifier.size(26.dp)) },
+                                icon = { Icon(Icons.Default.LibraryMusic, null, modifier = Modifier.size(26.dp)) },
                                 label = { Text("보관함", fontSize = 12.sp) },
                                 alwaysShowLabel = true
                             )
@@ -110,33 +137,20 @@ fun App(
                 }
             }
         ) { innerPadding ->
-            val bottomPadding = innerPadding.calculateBottomPadding()
-            // player나 add_to_playlist 화면일 때는 하단 패딩을 0으로 설정하여 전체 화면을 사용하게 함
-            val totalBottomPadding = if (currentRoute != "player" && currentRoute != "add_to_playlist") {
-                if (currentSong != null) bottomPadding + miniPlayerHeight else bottomPadding
-            } else {
-                0.dp
-            }
-
-            Box(modifier = Modifier.fillMaxSize().padding(bottom = totalBottomPadding)) {
-                NavHost(navController = navController, startDestination = "search") {
+            Box(modifier = Modifier.fillMaxSize().padding(bottom = innerPadding.calculateBottomPadding())) {
+                NavHost(
+                    navController = navController, 
+                    startDestination = "search",
+                    modifier = Modifier.fillMaxSize()
+                ) {
                     composable("search") {
                         MusicSearchScreen(
                             viewModel = searchViewModel,
                             onSongClick = { song -> musicPlayerViewModel.playSong(song, searchViewModel.uiState.value.songs) },
                             onNavigateToPlaylists = { navController.navigate("playlists") },
-                            onNavigateToArtist = { artist ->
-                                selectedArtistForDetail = artist.copy(popularSongs = searchViewModel.uiState.value.songs.filter { it.artist == artist.name })
-                                navController.navigate("artist_detail")
-                            },
-                            onNavigateToAlbum = { album ->
-                                selectedAlbumForDetail = album.copy(songs = searchViewModel.uiState.value.songs.filter { it.albumName == album.name })
-                                navController.navigate("album_detail")
-                            },
-                            onNavigateToAddToPlaylist = { song ->
-                                songToAddToPlaylist = song
-                                navController.navigate("add_to_playlist")
-                            },
+                            onNavigateToArtist = { artist -> navController.navigate("artist_detail/${artist.name}") },
+                            onNavigateToAlbum = { album -> navController.navigate("album_detail/${album.name}/${album.artist}") },
+                            onNavigateToAddToPlaylist = { song -> navController.navigate("add_to_playlist/${song.id}") },
                             onVoiceSearchClick = onVoiceSearchClick,
                             isVoiceSearching = isVoiceSearching
                         )
@@ -144,23 +158,11 @@ fun App(
                     composable("library") {
                         LibraryScreen(
                             localSongs = localSongs,
-                            onSongClick = { song, list ->
-                                musicPlayerViewModel.playSong(song, list)
-                                navController.navigate("player")
-                            },
-                            onNavigateToAddToPlaylist = { song ->
-                                songToAddToPlaylist = song
-                                navController.navigate("add_to_playlist")
-                            },
+                            onSongClick = { song, list -> musicPlayerViewModel.playSong(song, list) },
+                            onNavigateToAddToPlaylist = { song -> navController.navigate("add_to_playlist/${song.id}") },
                             onNavigateToPlaylists = { navController.navigate("playlists") },
-                            onNavigateToArtist = { artist -> 
-                                selectedArtistForDetail = artist.copy(popularSongs = localSongs.filter { it.artist == artist.name })
-                                navController.navigate("artist_detail")
-                            },
-                            onNavigateToAlbum = { album -> 
-                                selectedAlbumForDetail = album.copy(songs = localSongs.filter { it.albumName == album.name })
-                                navController.navigate("album_detail")
-                            }
+                            onNavigateToArtist = { artist -> navController.navigate("artist_detail/${artist.name}") },
+                            onNavigateToAlbum = { album -> navController.navigate("album_detail/${album.name}/${album.artist}") }
                         )
                     }
                     composable("playlists") {
@@ -179,40 +181,42 @@ fun App(
                         PlaylistViewScreen(
                             viewModel = playlistViewModel,
                             playerViewModel = musicPlayerViewModel,
-                            onSongClick = { song, list ->
-                                musicPlayerViewModel.playSong(song, list)
-                                navController.navigate("player")
-                            },
+                            onSongClick = { song, list -> musicPlayerViewModel.playSong(song, list) },
                             onBack = { navController.popBackStack() }
                         )
                     }
-                    composable("album_detail") {
-                        selectedAlbumForDetail?.let { album ->
-                            AlbumDetailScreen(
-                                album = album,
-                                onBack = { navController.popBackStack() },
-                                onSongClick = { song, list ->
-                                    musicPlayerViewModel.playSong(song, list)
-                                    navController.navigate("player")
-                                }
-                            )
-                        }
+                    composable(
+                        "album_detail/{albumName}/{artistName}",
+                        arguments = listOf(
+                            navArgument("albumName") { type = NavType.StringType },
+                            navArgument("artistName") { type = NavType.StringType }
+                        )
+                    ) { backStackEntry ->
+                        val albumName = backStackEntry.arguments?.getString("albumName") ?: ""
+                        val artistName = backStackEntry.arguments?.getString("artistName") ?: ""
+                        val albumSongs = (searchViewModel.uiState.collectAsState().value.songs + localSongs)
+                            .filter { it.albumName == albumName && it.artist == artistName }
+                            .distinctBy { it.id }
+
+                        AlbumDetailScreen(
+                            album = Album(name = albumName, artist = artistName, songs = albumSongs, imageUrl = albumSongs.firstOrNull()?.metaPoster),
+                            onBack = { navController.popBackStack() },
+                            onSongClick = { song, list -> musicPlayerViewModel.playSong(song, list) }
+                        )
                     }
-                    composable("artist_detail") {
-                        selectedArtistForDetail?.let { artist ->
+                    composable(
+                        "artist_detail/{artistName}",
+                        arguments = listOf(navArgument("artistName") { type = NavType.StringType })
+                    ) { backStackEntry ->
+                        val artistName = backStackEntry.arguments?.getString("artistName") ?: ""
+                        LaunchedEffect(artistName) { searchViewModel.loadArtistDetails(artistName) }
+                        val uiState by searchViewModel.uiState.collectAsState()
+                        uiState.selectedArtist?.let { artist ->
                             ArtistDetailScreen(
                                 artist = artist,
                                 onBack = { navController.popBackStack() },
-                                onSongClick = { song, list ->
-                                    musicPlayerViewModel.playSong(song, list)
-                                    navController.navigate("player")
-                                },
-                                onPlayAllClick = { list ->
-                                    if (list.isNotEmpty()) {
-                                        musicPlayerViewModel.playSong(list.first(), list)
-                                        navController.navigate("player")
-                                    }
-                                }
+                                onSongClick = { song, list -> musicPlayerViewModel.playSong(song, list) },
+                                onPlayAllClick = { list -> if (list.isNotEmpty()) musicPlayerViewModel.playSong(list.first(), list) }
                             )
                         }
                     }
@@ -220,47 +224,19 @@ fun App(
                         NowPlayingScreen(
                             viewModel = musicPlayerViewModel,
                             onBack = { navController.popBackStack() },
-                            onNavigateToArtist = { artist ->
-                                selectedArtistForDetail = artist
-                                navController.navigate("artist_detail")
-                            },
-                            onNavigateToAlbum = { album ->
-                                selectedAlbumForDetail = album
-                                navController.navigate("album_detail")
-                            },
-                            onNavigateToAddToPlaylist = { song ->
-                                songToAddToPlaylist = song
-                                navController.navigate("add_to_playlist")
-                            }
+                            onNavigateToArtist = { artist -> navController.navigate("artist_detail/${artist.name}") },
+                            onNavigateToAlbum = { album -> navController.navigate("album_detail/${album.name}/${album.artist}") },
+                            onNavigateToAddToPlaylist = { song -> navController.navigate("add_to_playlist/${song.id}") }
                         )
                     }
-                    composable("add_to_playlist") {
-                        songToAddToPlaylist?.let { song ->
-                            AddToPlaylistScreen(
-                                song = song,
-                                repository = musicRepository,
-                                onBack = { navController.popBackStack() },
-                                onPlaylistSelected = { 
-                                    navController.popBackStack() 
-                                    songToAddToPlaylist = null
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-
-            if (currentRoute != "player" && currentRoute != "add_to_playlist") {
-                currentSong?.let { song ->
-                    Box(modifier = Modifier.fillMaxSize().padding(bottom = bottomPadding)) {
-                        Box(modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(horizontal = 8.dp, vertical = 4.dp)) {
-                            MiniPlayer(
-                                song = song,
-                                isPlaying = isPlaying,
-                                onTogglePlay = { musicPlayerViewModel.togglePlayPause() },
-                                onNextClick = { musicPlayerViewModel.playNext() },
-                                onClick = { navController.navigate("player") }
-                            )
+                    composable(
+                        "add_to_playlist/{songId}",
+                        arguments = listOf(navArgument("songId") { type = NavType.LongType })
+                    ) { backStackEntry ->
+                        val songId = backStackEntry.arguments?.getLong("songId") ?: -1L
+                        val song = (searchViewModel.uiState.collectAsState().value.songs + localSongs).find { it.id == songId }
+                        song?.let {
+                            AddToPlaylistScreen(song = it, repository = musicRepository, onBack = { navController.popBackStack() }, onPlaylistSelected = { navController.popBackStack() })
                         }
                     }
                 }

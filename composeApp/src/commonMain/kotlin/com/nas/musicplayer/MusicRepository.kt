@@ -39,9 +39,9 @@ class MusicRepository(
         }
     }
 
-    suspend fun addRecentSearch(query: String) {
+    suspend fun addRecentSearch(query: String, timestamp: Long) {
         if (query.isBlank()) return
-        recentSearchDao.insertSearch(RecentSearch(query))
+        recentSearchDao.insertSearch(RecentSearch(query, timestamp))
     }
 
     suspend fun deleteRecentSearch(query: String) {

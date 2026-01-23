@@ -7,7 +7,9 @@ import android.media.MediaScannerConnection
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -26,43 +28,23 @@ class MainActivity : ComponentActivity() {
     private var isVoiceSearching by mutableStateOf(false)
     private var isVoiceFinal by mutableStateOf(false)
 
-    private val voiceSearchLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        isVoiceSearching = false
-        if (result.resultCode == RESULT_OK) {
-            val data = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-            val resultText = data?.get(0) ?: ""
-            if (resultText.isNotEmpty()) {
-                voiceSearchQuery = resultText
-                isVoiceFinal = true // 결과가 오면 명시적으로 최종 상태임을 알림
-            }
-        }
+    private var speechRecognizer: SpeechRecognizer? = null
+
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ ->
+        scanAndLoadMusic()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
-        val requestPermissionLauncher = registerForActivityResult(
-            ActivityResultContracts.RequestPermission()
-        ) { isGranted: Boolean ->
-            if (isGranted) {
-                scanAndLoadMusic()
-            }
+        if (SpeechRecognizer.isRecognitionAvailable(this)) {
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
         }
 
-        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.READ_MEDIA_AUDIO
-        } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
-        }
-
-        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) {
-            scanAndLoadMusic()
-        } else {
-            requestPermissionLauncher.launch(permission)
-        }
+        checkPermissions()
 
         setContent {
             val database = remember { getDatabase(applicationContext) }
@@ -77,7 +59,13 @@ class MainActivity : ComponentActivity() {
                 voiceQuery = voiceSearchQuery,
                 isVoiceFinal = isVoiceFinal,
                 isVoiceSearching = isVoiceSearching,
-                onVoiceSearchClick = { startVoiceRecognition() },
+                onVoiceSearchClick = { 
+                    if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                        startVoiceRecognition()
+                    } else {
+                        requestPermissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
+                    }
+                },
                 onVoiceQueryConsumed = { 
                     voiceSearchQuery = ""
                     isVoiceFinal = false
@@ -86,25 +74,78 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun checkPermissions() {
+        val permissions = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
+        } else {
+            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        permissions.add(Manifest.permission.RECORD_AUDIO)
+
+        val neededPermissions = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (neededPermissions.isNotEmpty()) {
+            requestPermissionLauncher.launch(neededPermissions.toTypedArray())
+        } else {
+            scanAndLoadMusic()
+        }
+    }
+
     private fun startVoiceRecognition() {
+        if (speechRecognizer == null) return
+
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "노래 제목이나 아티스트를 말씀하세요")
-            
-            // 말 끝남을 더 빨리 감지하도록 힌트 추가 (안드로이드 버전에 따라 지원 여부 다름)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1000)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
-        try {
-            isVoiceSearching = true
-            isVoiceFinal = false
-            voiceSearchQuery = ""
-            voiceSearchLauncher.launch(intent)
-        } catch (e: Exception) {
-            isVoiceSearching = false
-        }
+
+        speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {
+                voiceSearchQuery = ""
+                isVoiceSearching = true
+                isVoiceFinal = false
+            }
+
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {
+                isVoiceSearching = false
+            }
+
+            override fun onError(error: Int) {
+                isVoiceSearching = false
+                isVoiceFinal = true
+            }
+
+            override fun onResults(results: Bundle?) {
+                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (!matches.isNullOrEmpty()) {
+                    voiceSearchQuery = matches[0]
+                }
+                isVoiceFinal = true
+            }
+
+            override fun onPartialResults(partialResults: Bundle?) {
+                val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (!matches.isNullOrEmpty()) {
+                    voiceSearchQuery = matches[0]
+                }
+            }
+
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+
+        speechRecognizer?.startListening(intent)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        speechRecognizer?.destroy()
     }
 
     private fun scanAndLoadMusic() {
