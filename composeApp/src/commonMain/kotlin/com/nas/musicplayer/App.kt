@@ -39,32 +39,25 @@ fun App(
         factory = MusicSearchViewModel.Factory(musicRepository)
     )
     
-    // 음성 검색 통합 처리 로직
-    // 인식이 완료되었을 때 검색 수행
+    LaunchedEffect(localSongs) {
+        searchViewModel.setLocalSongs(localSongs)
+    }
+    
     LaunchedEffect(isVoiceFinal, voiceQuery) {
         if (isVoiceFinal) {
             if (voiceQuery.isNotBlank()) {
-                println("VoiceSearchDebug: Final query executing - '$voiceQuery'")
                 searchViewModel.performSearch(voiceQuery)
                 onVoiceQueryConsumed()
             } else {
-                // 종료 신호는 왔는데 텍스트가 없는 경우, 최대 1.5초까지 0.5초 간격으로 끈질기게 재시도
-                println("VoiceSearchDebug: Final state reached but query blank. Retrying...")
                 var retryCount = 0
-                // 루프 내부에서 voiceQuery의 최신값을 계속 확인해야 함
                 while (retryCount < 3 && voiceQuery.isBlank() && isVoiceFinal) {
                     delay(500)
                     retryCount++
-                    println("VoiceSearchDebug: Retry $retryCount (query: '$voiceQuery')...")
                 }
                 
-                // 루프를 다 돌았는데도 (혹은 루프 도중 검색어가 채워졌는데) 여전히 비어있다면 종료
                 if (isVoiceFinal && voiceQuery.isBlank() && retryCount >= 3) {
-                    println("VoiceSearchDebug: Giving up after retries. Consuming state.")
                     onVoiceQueryConsumed()
                 } else if (isVoiceFinal && voiceQuery.isNotBlank()) {
-                    // 루프 도중 검색어가 채워진 경우
-                    println("VoiceSearchDebug: Query recovered during retry - '$voiceQuery'")
                     searchViewModel.performSearch(voiceQuery)
                     onVoiceQueryConsumed()
                 }
@@ -72,10 +65,8 @@ fun App(
         }
     }
 
-    // 사용자가 말하는 도중에 실시간으로 검색창에 텍스트 표시
     LaunchedEffect(voiceQuery, isVoiceSearching) {
         if (isVoiceSearching && !isVoiceFinal && voiceQuery.isNotBlank()) {
-            println("VoiceSearchDebug: Partial query update - '$voiceQuery'")
             searchViewModel.onSearchQueryChanged(voiceQuery)
         }
     }
@@ -85,7 +76,6 @@ fun App(
     val currentDestination = navBackStackEntry?.destination
     val currentRoute = currentDestination?.route
 
-    // 앱이 백그라운드에서 돌아올 때 검색 탭 우선 이동
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         if (currentRoute != "search" && currentRoute != null) {
             navController.navigate("search") {
@@ -166,7 +156,10 @@ fun App(
                 }
             }
         ) { innerPadding ->
-            Box(modifier = Modifier.fillMaxSize().padding(bottom = innerPadding.calculateBottomPadding())) {
+            val isPlayerScreen = currentRoute == "player"
+            val bottomPadding = if (isPlayerScreen) 0.dp else innerPadding.calculateBottomPadding()
+
+            Box(modifier = Modifier.fillMaxSize().padding(bottom = bottomPadding)) {
                 NavHost(
                     navController = navController, 
                     startDestination = "search",
@@ -223,30 +216,46 @@ fun App(
                     ) { backStackEntry ->
                         val albumName = backStackEntry.arguments?.getString("albumName") ?: ""
                         val artistName = backStackEntry.arguments?.getString("artistName") ?: ""
-                        val albumSongs = (searchViewModel.uiState.collectAsState().value.songs + localSongs)
-                            .filter { it.albumName == albumName && it.artist == artistName }
-                            .distinctBy { it.id }
+                        
+                        LaunchedEffect(albumName, artistName) {
+                            searchViewModel.loadAlbumDetails(albumName, artistName)
+                        }
 
-                        AlbumDetailScreen(
-                            album = Album(name = albumName, artist = artistName, songs = albumSongs, imageUrl = albumSongs.firstOrNull()?.metaPoster),
-                            onBack = { navController.popBackStack() },
-                            onSongClick = { song, list -> musicPlayerViewModel.playSong(song, list) }
-                        )
+                        val uiState by searchViewModel.uiState.collectAsState()
+                        if (uiState.isAlbumLoading && uiState.selectedAlbum == null) {
+                            MusicLoadingScreen()
+                        } else {
+                            uiState.selectedAlbum?.let { album ->
+                                AlbumDetailScreen(
+                                    album = album,
+                                    onBack = { navController.popBackStack() },
+                                    onSongClick = { song, list -> musicPlayerViewModel.playSong(song, list) }
+                                )
+                            }
+                        }
                     }
                     composable(
                         "artist_detail/{artistName}",
                         arguments = listOf(navArgument("artistName") { type = NavType.StringType })
                     ) { backStackEntry ->
                         val artistName = backStackEntry.arguments?.getString("artistName") ?: ""
-                        LaunchedEffect(artistName) { searchViewModel.loadArtistDetails(artistName) }
+                        
+                        LaunchedEffect(artistName) { 
+                            searchViewModel.loadArtistDetails(artistName) 
+                        }
+                        
                         val uiState by searchViewModel.uiState.collectAsState()
-                        uiState.selectedArtist?.let { artist ->
-                            ArtistDetailScreen(
-                                artist = artist,
-                                onBack = { navController.popBackStack() },
-                                onSongClick = { song, list -> musicPlayerViewModel.playSong(song, list) },
-                                onPlayAllClick = { list -> if (list.isNotEmpty()) musicPlayerViewModel.playSong(list.first(), list) }
-                            )
+                        if (uiState.isArtistLoading && uiState.selectedArtist == null) {
+                            MusicLoadingScreen()
+                        } else {
+                            uiState.selectedArtist?.let { artist ->
+                                ArtistDetailScreen(
+                                    artist = artist,
+                                    onBack = { navController.popBackStack() },
+                                    onSongClick = { song, list -> musicPlayerViewModel.playSong(song, list) },
+                                    onPlayAllClick = { list -> if (list.isNotEmpty()) musicPlayerViewModel.playSong(list.first(), list) }
+                                )
+                            }
                         }
                     }
                     composable("player") {

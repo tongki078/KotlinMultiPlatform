@@ -5,11 +5,23 @@ import androidx.compose.ui.window.ComposeUIViewController
 import com.nas.musicplayer.db.getDatabase
 
 fun MainViewController() = ComposeUIViewController {
+    println("MainViewController: Starting Skia Compose Engine...")
+
     val database = remember { getDatabase() }
     val repository = remember { MusicRepository(database.playlistDao(), database.recentSearchDao()) }
     val controller = remember { MusicPlayerController() }
     val viewModel = remember { MusicPlayerViewModel(controller, repository) }
-    val localSongs = remember { LocalMusicLoader.loadLocalMusic() }
+    
+    // 로컬 곡 목록 상태 관리
+    var localSongsState by remember { mutableStateOf(emptyList<Song>()) }
+    
+    // 앱 시작 시 로컬 곡 로드 및 로그 출력 보장
+    LaunchedEffect(Unit) {
+        println("MainViewController: Triggering LocalMusicLoader...")
+        val songs = LocalMusicLoader.loadLocalMusic()
+        localSongsState = songs
+        println("MainViewController: Load sequence complete. Songs found: ${songs.size}")
+    }
 
     var voiceQuery by remember { mutableStateOf("") }
     var isVoiceFinal by remember { mutableStateOf(false) }
@@ -34,7 +46,7 @@ fun MainViewController() = ComposeUIViewController {
             onError = { 
                 println("iOS Voice Search Error: $it")
                 isVoiceSearching = false
-                isVoiceFinal = true // 에러 시에도 종료 상태로 만들어 대기 해제
+                isVoiceFinal = true 
             }
         )
     }
@@ -42,7 +54,7 @@ fun MainViewController() = ComposeUIViewController {
     App(
         musicRepository = repository,
         musicPlayerViewModel = viewModel,
-        localSongs = localSongs,
+        localSongs = localSongsState,
         voiceQuery = voiceQuery,
         isVoiceFinal = isVoiceFinal,
         isVoiceSearching = isVoiceSearching,

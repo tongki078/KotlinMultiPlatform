@@ -23,6 +23,8 @@ data class MusicSearchUiState(
     val searchQuery: String = "",
     val selectedArtist: Artist? = null,
     val isArtistLoading: Boolean = false,
+    val selectedAlbum: Album? = null,
+    val isAlbumLoading: Boolean = false,
     val recentSearches: List<RecentSearch> = emptyList(),
     val albums: List<Album> = emptyList()
 )
@@ -30,6 +32,7 @@ data class MusicSearchUiState(
 class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel() {
 
     private val musicApiService = MusicApiServiceImpl(httpClient)
+    private var allLocalSongs: List<Song> = emptyList()
 
     private val _uiState = MutableStateFlow(MusicSearchUiState())
     val uiState: StateFlow<MusicSearchUiState> = _uiState.asStateFlow()
@@ -51,6 +54,10 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         }
     }
 
+    fun setLocalSongs(songs: List<Song>) {
+        allLocalSongs = songs
+    }
+
     fun onSearchQueryChanged(query: String) {
         _uiState.update { it.copy(searchQuery = query) }
         if (query.isBlank()) {
@@ -65,6 +72,7 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
                 val top100Songs = musicApiService.getTop100().toSongList()
                     .filter { !it.isDir }
                     .map { cleanSongInfo(it) }
+                    .distinctBy { it.name }
                 _uiState.update { it.copy(songs = top100Songs, isLoading = false) }
             } catch (e: Exception) {
                 _uiState.update { it.copy(isLoading = false) }
@@ -73,33 +81,46 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
     }
 
     fun performSearch(query: String = _uiState.value.searchQuery) {
-        println("MusicSearchViewModel: performSearch entry - query: '$query'")
-        
-        // 음성 인식 결과의 앞뒤 공백 및 마침표 제거
         val trimmedQuery = query.trim().replace(Regex("\\.$"), "")
-        println("MusicSearchViewModel: trimmed query: '$trimmedQuery'")
-
         if (trimmedQuery.isBlank()) {
-            println("MusicSearchViewModel: Query is blank, loading top 100")
             loadTop100()
             return
         }
+
+        // 1. 로컬 곡 즉시 검색
+        val localResults = allLocalSongs.filter {
+            (it.name?.contains(trimmedQuery, ignoreCase = true) == true) ||
+            it.artist.contains(trimmedQuery, ignoreCase = true) ||
+            it.albumName.contains(trimmedQuery, ignoreCase = true)
+        }
         
-        _uiState.update { it.copy(searchQuery = trimmedQuery, isLoading = true) }
+        // 중요: 로컬 결과를 즉시 반영하되, 서버 검색이 남았으므로 isLoading을 true로 확실히 유지
+        _uiState.update { it.copy(
+            searchQuery = trimmedQuery, 
+            songs = localResults,
+            isLoading = true 
+        ) }
 
         viewModelScope.launch {
             val timestamp = Clock.System.now().toEpochMilliseconds()
             repository.addRecentSearch(trimmedQuery, timestamp)
 
             try {
-                println("MusicSearchViewModel: Fetching results from API for '$trimmedQuery'")
-                val searchResult = musicApiService.search(trimmedQuery).toSongList()
+                // 서버에서 데이터 가져오기
+                val networkResult = musicApiService.search(trimmedQuery).toSongList()
                     .filter { !it.isDir }
                     .map { cleanSongInfo(it) }
-                println("MusicSearchViewModel: Found ${searchResult.size} results")
-                _uiState.update { it.copy(songs = searchResult, isLoading = false) }
+                    .distinctBy { it.name }
+                
+                // 중복 제거 기준을 iOS에서 더 안정적인 방식으로 통일
+                val finalResult = (localResults + networkResult).distinctBy { 
+                    "${it.name}_${it.artist}" 
+                }
+                
+                // 서버 검색까지 완전히 끝난 후에만 isLoading = false
+                _uiState.update { it.copy(songs = finalResult, isLoading = false) }
             } catch (e: Exception) {
-                println("MusicSearchViewModel: Search error - ${e.message}")
+                // 에러 발생 시에도 로딩 상태 해제하여 UI 멈춤 방지
                 _uiState.update { it.copy(isLoading = false) }
             }
         }
@@ -164,14 +185,32 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
 
     fun loadArtistDetails(artistName: String, fallbackImageUrl: String? = null) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isArtistLoading = true) }
+            val cachedSongs = _uiState.value.songs
+                .filter { it.artist.contains(artistName, ignoreCase = true) }
+                .distinctBy { it.name }
+
+            if (cachedSongs.isNotEmpty()) {
+                val cachedArtist = Artist(
+                    name = artistName,
+                    imageUrl = fallbackImageUrl ?: cachedSongs.firstOrNull()?.metaPoster,
+                    popularSongs = cachedSongs
+                )
+                _uiState.update { it.copy(selectedArtist = cachedArtist, isArtistLoading = false) }
+                if (cachedSongs.size >= 5) return@launch
+            } else {
+                _uiState.update { it.copy(isArtistLoading = true) }
+            }
+
             try {
                 val relatedSongs = musicApiService.search(artistName).toSongList()
                     .filter { !it.isDir }
                     .map { cleanSongInfo(it) }
+                    .filter { it.artist.contains(artistName, ignoreCase = true) }
+                    .distinctBy { it.name }
+                
                 val artistInfo = Artist(
                     name = artistName,
-                    imageUrl = fallbackImageUrl,
+                    imageUrl = fallbackImageUrl ?: relatedSongs.firstOrNull()?.metaPoster,
                     popularSongs = relatedSongs
                 )
                 _uiState.update {
@@ -179,6 +218,47 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
                 }
             } catch (e: Exception) {
                 _uiState.update { it.copy(isArtistLoading = false) }
+            }
+        }
+    }
+
+    fun loadAlbumDetails(albumName: String, artistName: String, fallbackImageUrl: String? = null) {
+        viewModelScope.launch {
+            val cachedSongs = _uiState.value.songs
+                .filter { it.albumName == albumName && (it.artist.contains(artistName, ignoreCase = true) || artistName == "Unknown Artist") }
+                .distinctBy { it.name }
+
+            if (cachedSongs.isNotEmpty()) {
+                val cachedAlbum = Album(
+                    name = albumName,
+                    artist = artistName,
+                    songs = cachedSongs,
+                    imageUrl = fallbackImageUrl ?: cachedSongs.firstOrNull()?.metaPoster
+                )
+                _uiState.update { it.copy(selectedAlbum = cachedAlbum, isAlbumLoading = false) }
+                return@launch
+            } else {
+                _uiState.update { it.copy(isAlbumLoading = true) }
+            }
+
+            try {
+                val searchResult = musicApiService.search(albumName).toSongList()
+                    .filter { !it.isDir }
+                    .map { cleanSongInfo(it) }
+                    .filter { it.albumName == albumName && (it.artist.contains(artistName, ignoreCase = true) || artistName == "Unknown Artist") }
+                    .distinctBy { it.name }
+                
+                val albumInfo = Album(
+                    name = albumName,
+                    artist = artistName,
+                    songs = searchResult,
+                    imageUrl = fallbackImageUrl ?: searchResult.firstOrNull()?.metaPoster
+                )
+                _uiState.update {
+                    it.copy(selectedAlbum = albumInfo, isAlbumLoading = false)
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isAlbumLoading = false) }
             }
         }
     }

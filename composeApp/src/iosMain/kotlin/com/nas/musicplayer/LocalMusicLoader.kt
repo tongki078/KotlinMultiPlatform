@@ -19,6 +19,8 @@ object LocalMusicLoader {
             true
         ).firstOrNull() as? String ?: return emptyList()
 
+        NSLog("ACTUAL_PATH_START: %s", documentsPath)
+
         val cachePath = NSSearchPathForDirectoriesInDomains(
             NSCachesDirectory,
             NSUserDomainMask,
@@ -27,47 +29,55 @@ object LocalMusicLoader {
 
         try {
             val files = fileManager.contentsOfDirectoryAtPath(documentsPath, null)
-            files?.filter { 
+            
+            files?.forEach { 
                 val fileName = it as String
-                fileName.endsWith(".mp3", true) || fileName.endsWith(".m4a", true) 
-            }?.forEach { 
-                val fileName = it as String
-                val fullPath = "$documentsPath/$fileName"
-                val url = NSURL.fileURLWithPath(fullPath)
+                val lowerName = fileName.lowercase()
                 
-                val asset = AVAsset.assetWithURL(url)
-                var artworkPath: String? = null
-                
-                // Extract artwork
-                val artworkItem = asset.commonMetadata.filter { item ->
-                    val metadataItem = item as AVMetadataItem
-                    metadataItem.commonKey() == AVMetadataCommonKeyArtwork
-                }.firstOrNull() as? AVMetadataItem
-
-                if (artworkItem != null && cachePath != null) {
-                    val data = artworkItem.value() as? NSData
-                    if (data != null) {
-                        val artFileName = "art_${fileName.hashCode()}.jpg"
-                        val artFullPath = "$cachePath/$artFileName"
-                        data.writeToFile(artFullPath, true)
-                        artworkPath = artFullPath
+                if (lowerName.endsWith(".mp3") || lowerName.endsWith(".m4a") || lowerName.endsWith(".wav")) {
+                    val fullPath = "$documentsPath/$fileName"
+                    val url = NSURL.fileURLWithPath(fullPath)
+                    val asset = AVAsset.assetWithURL(url)
+                    
+                    var title: String? = null
+                    var artist: String? = null
+                    var artworkPath: String? = null
+                    
+                    // 제목 및 아티스트 메타데이터 추출
+                    asset.commonMetadata.forEach { item ->
+                        val metadataItem = item as AVMetadataItem
+                        when (metadataItem.commonKey()) {
+                            AVMetadataCommonKeyTitle -> title = metadataItem.value() as? String
+                            AVMetadataCommonKeyArtist -> artist = metadataItem.value() as? String
+                            AVMetadataCommonKeyArtwork -> {
+                                if (cachePath != null) {
+                                    val data = metadataItem.value() as? NSData
+                                    if (data != null) {
+                                        val artFileName = "art_${fileName.hashCode()}.jpg"
+                                        val artFullPath = "$cachePath/$artFileName"
+                                        data.writeToFile(artFullPath, true)
+                                        artworkPath = artFullPath
+                                    }
+                                }
+                            }
+                        }
                     }
-                }
 
-                songList.add(
-                    Song(
-                        id = fileName.hashCode().toLong(),
-                        name = fileName.removeSuffix(".mp3").removeSuffix(".m4a"),
-                        artist = "Local Device",
-                        albumName = "Documents",
-                        streamUrl = fullPath,
-                        isDir = false,
-                        metaPoster = artworkPath
+                    songList.add(
+                        Song(
+                            id = fileName.hashCode().toLong(),
+                            name = title ?: fileName.substringBeforeLast("."),
+                            artist = artist ?: "Local Device",
+                            albumName = "Local Album",
+                            streamUrl = fullPath,
+                            isDir = false,
+                            metaPoster = artworkPath
+                        )
                     )
-                )
+                }
             }
         } catch (e: Exception) {
-            println("iOS LocalMusicLoader Error: ${e.message}")
+            NSLog("iOS LocalMusicLoader Error: %s", e.message ?: "Unknown")
         }
         
         return songList

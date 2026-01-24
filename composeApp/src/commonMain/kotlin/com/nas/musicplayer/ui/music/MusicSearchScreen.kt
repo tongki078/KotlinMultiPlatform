@@ -48,7 +48,7 @@ fun MusicSearchScreen(
     onVoiceSearchClick: () -> Unit,
     isVoiceSearching: Boolean = false,
     viewModel: MusicSearchViewModel,
-    bottomPadding: Dp = 0.dp // App.kt에서 전달받은 패딩
+    bottomPadding: Dp = 0.dp 
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()
@@ -85,8 +85,8 @@ fun MusicSearchScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding() // 검색창이 상태바 바로 아래 오도록 유지
-            .padding(bottom = bottomPadding) // 하단 탭바 영역만큼 패딩
+            .statusBarsPadding() 
+            .padding(bottom = bottomPadding) 
             .imePadding()
             .pointerInput(Unit) {
                 detectTapGestures(onTap = {
@@ -167,6 +167,22 @@ fun MusicSearchScreen(
                 }
             }
         }
+
+        // iOS 가시성 최적화: 서버 로딩 바
+        AnimatedVisibility(
+            visible = uiState.isLoading && uiState.songs.isNotEmpty(),
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically()
+        ) {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp) // 높이를 더 키움
+                    .padding(horizontal = 16.dp, vertical = 2.dp),
+                color = primaryColor,
+                trackColor = primaryColor.copy(alpha = 0.2f) // 배경을 확실히 보이게 함
+            )
+        }
         
         Box(
             modifier = Modifier
@@ -174,7 +190,7 @@ fun MusicSearchScreen(
                 .padding(top = 4.dp) 
         ) {
             when {
-                uiState.isLoading -> {
+                uiState.isLoading && uiState.songs.isEmpty() -> {
                     MusicLoadingScreen()
                 }
                 uiState.songs.isEmpty() && uiState.searchQuery.isNotEmpty() && !isSearchFocused -> {
@@ -200,7 +216,7 @@ fun MusicSearchScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "'${uiState.searchQuery}'에 대한 결과를 찾을 수 없습니다. 철자를 확인하거나 다른 검색어를 입력해 보세요.",
+                            text = "'${uiState.searchQuery}'에 대한 결과를 찾을 수 없습니다.",
                             style = MaterialTheme.typography.bodyMedium.copy(color = Color.Gray),
                             textAlign = TextAlign.Center
                         )
@@ -212,7 +228,34 @@ fun MusicSearchScreen(
                         contentPadding = PaddingValues(bottom = 16.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        items(uiState.songs, key = { it.id }) { song ->
+                        // 서버 검색 중 안내 메시지 아이템
+                        if (uiState.isLoading && uiState.songs.isNotEmpty()) {
+                            item {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 12.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 2.dp,
+                                        color = primaryColor.copy(alpha = 0.7f)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        "서버에서 검색 결과를 가져오는 중...",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            color = primaryColor.copy(alpha = 0.7f),
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    )
+                                }
+                            }
+                        }
+
+                        items(uiState.songs, key = { it.id.toString() + it.name + it.artist }) { song ->
                             SongListItem(
                                 song = song,
                                 onItemClick = { onSongClick(song) },
