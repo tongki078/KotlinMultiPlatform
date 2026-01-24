@@ -24,15 +24,15 @@ object LocalMusicLoader {
             
             files?.forEach { 
                 val fileName = it as String
-                val lowerName = fileName.lowercase()
+                // [중요] iOS 파일 이름은 NFD(분해됨)일 수 있으므로 NFC(결합됨)로 정규화
+                val normalizedFileName = (fileName as NSString).precomposedStringWithCanonicalMapping
+                val lowerName = normalizedFileName.lowercase()
                 
-                // .mp3, .m4a, .wav 파일만 처리 (이미지 파일 제외)
                 if (lowerName.endsWith(".mp3") || lowerName.endsWith(".m4a") || lowerName.endsWith(".wav")) {
                     val fullPath = "$documentsPath/$fileName"
-                    val url = NSURL.fileURLWithPath(fullPath)
                     
-                    // 파일 이름에서 타이틀과 아티스트 분리 시도 ("Artist - Title.mp3")
-                    val baseName = fileName.substringBeforeLast(".")
+                    // 확장자 제거
+                    val baseName = (normalizedFileName as NSString).stringByDeletingPathExtension()
                     var displayTitle = baseName
                     var displayArtist = "보관함"
 
@@ -42,8 +42,8 @@ object LocalMusicLoader {
                         displayTitle = parts[1].trim()
                     }
 
-                    // 이미지 파일 경로 확인 (노래 파일과 동일한 이름의 .jpg)
-                    val artworkPath = "$documentsPath/$baseName.jpg"
+                    // 이미지 파일 경로 확인
+                    val artworkPath = "$documentsPath/${baseName}.jpg"
                     val finalArtwork = if (fileManager.fileExistsAtPath(artworkPath)) {
                         artworkPath
                     } else {

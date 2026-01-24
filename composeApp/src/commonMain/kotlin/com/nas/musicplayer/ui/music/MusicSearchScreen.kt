@@ -47,7 +47,8 @@ fun MusicSearchScreen(
     onNavigateToPlaylists: () -> Unit,
     onVoiceSearchClick: () -> Unit,
     onDownloadSong: (Song) -> Unit,
-    downloadingSongIds: Set<Long> = emptySet(), // 추가
+    onDeleteSong: (Song) -> Unit, // 삭제 추가
+    downloadingSongIds: Set<Long> = emptySet(),
     isVoiceSearching: Boolean = false,
     viewModel: MusicSearchViewModel,
     bottomPadding: Dp = 0.dp 
@@ -170,21 +171,6 @@ fun MusicSearchScreen(
             }
         }
 
-        AnimatedVisibility(
-            visible = uiState.isLoading && uiState.songs.isNotEmpty(),
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically()
-        ) {
-            LinearProgressIndicator(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-                    .padding(horizontal = 16.dp, vertical = 2.dp),
-                color = primaryColor,
-                trackColor = primaryColor.copy(alpha = 0.2f)
-            )
-        }
-        
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -229,32 +215,6 @@ fun MusicSearchScreen(
                         contentPadding = PaddingValues(bottom = 16.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        if (uiState.isLoading && uiState.songs.isNotEmpty()) {
-                            item {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 12.dp),
-                                    horizontalArrangement = Arrangement.Center,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(14.dp),
-                                        strokeWidth = 2.dp,
-                                        color = primaryColor.copy(alpha = 0.7f)
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Text(
-                                        "서버에서 검색 결과를 가져오는 중...",
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            color = primaryColor.copy(alpha = 0.7f),
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                    )
-                                }
-                            }
-                        }
-
                         items(uiState.songs, key = { it.id.toString() + it.name + it.artist }) { song ->
                             SongListItem(
                                 song = song,
@@ -263,29 +223,11 @@ fun MusicSearchScreen(
                                     selectedSongForSheet = song
                                     scope.launch { sheetState.show() }
                                 },
-                                isDownloading = downloadingSongIds.contains(song.id) // 상태 전달
+                                isDownloading = downloadingSongIds.contains(song.id),
+                                isDownloaded = viewModel.isSongDownloaded(song) // 다운로드 여부 체크
                             )
                         }
                     }
-                }
-            }
-
-            if (isSearchFocused && uiState.searchQuery.isEmpty() && uiState.recentSearches.isNotEmpty()) {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    RecentSearchesView(
-                        recentSearches = uiState.recentSearches,
-                        onSearchClick = { 
-                            lastAppliedQuery = it
-                            viewModel.performSearch(it)
-                            focusManager.clearFocus()
-                            isSearchFocused = false
-                        },
-                        onDeleteClick = { viewModel.deleteRecentSearch(it) },
-                        onClearAll = { viewModel.clearAllRecentSearches() }
-                    )
                 }
             }
         }
@@ -293,6 +235,7 @@ fun MusicSearchScreen(
 
     if (selectedSongForSheet != null) {
         val currentSong = selectedSongForSheet!!
+        val isDownloaded = viewModel.isSongDownloaded(currentSong)
         ModalBottomSheet(
             onDismissRequest = { selectedSongForSheet = null },
             sheetState = sheetState
@@ -326,53 +269,18 @@ fun MusicSearchScreen(
                         selectedSongForSheet = null
                         onDownloadSong(currentSong)
                     }
-                }
+                },
+                onDeleteClick = if (isDownloaded) {
+                    {
+                        scope.launch {
+                            sheetState.hide()
+                            selectedSongForSheet = null
+                            onDeleteSong(currentSong)
+                        }
+                    }
+                } else null,
+                isDownloaded = isDownloaded
             )
-        }
-    }
-}
-
-@Composable
-fun RecentSearchesView(
-    recentSearches: List<RecentSearch>,
-    onSearchClick: (String) -> Unit,
-    onDeleteClick: (String) -> Unit,
-    onClearAll: () -> Unit
-) {
-    val primaryColor = MaterialTheme.colorScheme.primary
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 16.dp)
-    ) {
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("최근 검색어", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text("지우기", color = primaryColor, fontSize = 14.sp, modifier = Modifier.clickable { onClearAll() })
-            }
-        }
-        items(recentSearches) { search ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSearchClick(search.query) }
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(Icons.Default.History, null, tint = Color.Gray, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(search.query, modifier = Modifier.weight(1f), fontSize = 15.sp)
-                IconButton(
-                    onClick = { onDeleteClick(search.query) },
-                    modifier = Modifier.size(24.dp)
-                ) {
-                    Icon(Icons.Default.Close, null, tint = Color.LightGray, modifier = Modifier.size(14.dp))
-                }
-            }
-            HorizontalDivider(modifier = Modifier.padding(start = 46.dp, end = 16.dp), thickness = 0.5.dp, color = Color.LightGray.copy(alpha = 0.3f))
         }
     }
 }

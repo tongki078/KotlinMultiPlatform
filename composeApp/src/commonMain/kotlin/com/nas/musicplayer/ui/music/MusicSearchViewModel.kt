@@ -27,7 +27,8 @@ data class MusicSearchUiState(
     val isAlbumLoading: Boolean = false,
     val recentSearches: List<RecentSearch> = emptyList(),
     val albums: List<Album> = emptyList(),
-    val downloadingSongIds: Set<Long> = emptySet() // 다운로드 중인 곡 ID 목록 추가
+    val downloadingSongIds: Set<Long> = emptySet(),
+    val downloadedSongKeys: Set<String> = emptySet()
 )
 
 class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel() {
@@ -57,6 +58,25 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
 
     fun setLocalSongs(songs: List<Song>) {
         allLocalSongs = songs
+        updateDownloadedKeys()
+    }
+
+    private fun updateDownloadedKeys() {
+        // [개선] 비교용 키 생성 시 공백과 특수문자를 제거하여 매칭 확률을 높임
+        val keys = allLocalSongs.map { generateMatchKey(it.artist, it.name ?: "") }.toSet()
+        _uiState.update { it.copy(downloadedSongKeys = keys) }
+    }
+
+    fun isSongDownloaded(song: Song): Boolean {
+        val key = generateMatchKey(song.artist, song.name ?: "")
+        return _uiState.value.downloadedSongKeys.contains(key)
+    }
+
+    // 비교를 위한 순수 텍스트 키 생성 (공백, 특수문자 제거)
+    private fun generateMatchKey(artist: String, title: String): String {
+        val cleanArtist = artist.replace(Regex("[^a-zA-Z0-9가-힣ㄱ-ㅎㅏ-ㅣ]"), "").lowercase()
+        val cleanTitle = title.replace(Regex("[^a-zA-Z0-9가-힣ㄱ-ㅎㅏ-ㅣ]"), "").lowercase()
+        return "$cleanArtist-$cleanTitle"
     }
 
     fun onSearchQueryChanged(query: String) {
@@ -118,7 +138,6 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         }
     }
 
-    // 다운로드 상태 관리 함수 추가
     fun startDownloading(songId: Long) {
         _uiState.update { it.copy(downloadingSongIds = it.downloadingSongIds + songId) }
     }

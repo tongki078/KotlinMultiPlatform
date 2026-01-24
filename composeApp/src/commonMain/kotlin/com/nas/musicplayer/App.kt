@@ -96,19 +96,42 @@ fun App(
     val currentSong by musicPlayerViewModel.currentSong.collectAsState()
     val isPlaying by musicPlayerViewModel.isPlaying.collectAsState()
 
+    // 공통 삭제 함수
+    val onDeleteSong: (Song) -> Unit = { song ->
+        val filePath = song.streamUrl ?: ""
+        val success = getFileDownloader().deleteFile(filePath)
+        if (success) {
+            onRefreshLocalSongs()
+            scope.launch {
+                snackbarHostState.showSnackbar("보관함에서 삭제되었습니다.")
+            }
+        } else {
+            scope.launch {
+                snackbarHostState.showSnackbar("삭제 실패")
+            }
+        }
+    }
+
     // 공통 다운로드 함수
     val onDownloadSong: (Song) -> Unit = { song ->
-        searchViewModel.startDownloading(song.id)
-        musicPlayerViewModel.downloadSong(song) { success, message ->
-            searchViewModel.stopDownloading(song.id)
-            if (success) {
-                onRefreshLocalSongs()
-            }
+        // 이미 다운로드된 경우 방어 로직
+        if (searchViewModel.isSongDownloaded(song)) {
             scope.launch {
-                snackbarHostState.showSnackbar(
-                    message = message ?: if (success) "보관함에 추가되었습니다." else "다운로드 실패",
-                    duration = SnackbarDuration.Short
-                )
+                snackbarHostState.showSnackbar("이미 보관함에 있는 곡입니다.")
+            }
+        } else {
+            searchViewModel.startDownloading(song.id)
+            musicPlayerViewModel.downloadSong(song) { success, message ->
+                searchViewModel.stopDownloading(song.id)
+                if (success) {
+                    onRefreshLocalSongs()
+                }
+                scope.launch {
+                    snackbarHostState.showSnackbar(
+                        message = message ?: if (success) "보관함에 추가되었습니다." else "다운로드 실패",
+                        duration = SnackbarDuration.Short
+                    )
+                }
             }
         }
     }
@@ -199,7 +222,8 @@ fun App(
                             onNavigateToAddToPlaylist = { song -> navController.navigate("add_to_playlist/${song.id}") },
                             onVoiceSearchClick = onVoiceSearchClick,
                             onDownloadSong = onDownloadSong,
-                            downloadingSongIds = uiState.downloadingSongIds, // 누락된 상태 전달
+                            onDeleteSong = onDeleteSong,
+                            downloadingSongIds = uiState.downloadingSongIds,
                             isVoiceSearching = isVoiceSearching
                         )
                     }
@@ -212,7 +236,8 @@ fun App(
                             onNavigateToArtist = { artist -> navController.navigate("artist_detail/${artist.name}") },
                             onNavigateToAlbum = { album -> navController.navigate("album_detail/${album.name}/${album.artist}") },
                             onDownloadSong = onDownloadSong,
-                            downloadingSongIds = uiState.downloadingSongIds // 상태 전달
+                            onDeleteSong = onDeleteSong,
+                            downloadingSongIds = uiState.downloadingSongIds
                         )
                     }
                     composable("playlists") {

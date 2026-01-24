@@ -8,16 +8,35 @@ import kotlinx.cinterop.ExperimentalForeignApi
 @OptIn(ExperimentalForeignApi::class)
 class IosFileDownloader : FileDownloader {
     override fun downloadFile(url: String, imageUrl: String?, fileName: String, onResult: (Boolean, String?) -> Unit) {
-        // [중요] 한글 깨짐 방지: 파일 이름에서 허용되지 않는 문자만 제거하고 한글은 유지
         val safeFileName = fileName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
         
-        // 이미지 다운로드 (노래 파일명과 동일한 이름으로 저장하여 매칭)
         imageUrl?.let { imgUrl ->
             val baseName = if (safeFileName.contains(".")) safeFileName.substringBeforeLast(".") else safeFileName
             downloadImage(imgUrl, "$baseName.jpg")
         }
         
         downloadInternal(url, safeFileName, onResult)
+    }
+
+    override fun deleteFile(filePath: String): Boolean {
+        val fileManager = NSFileManager.defaultManager
+        val url = NSURL.fileURLWithPath(filePath)
+        
+        // 노래 파일 삭제
+        val musicDeleted = if (fileManager.fileExistsAtPath(filePath)) {
+            fileManager.removeItemAtURL(url, null)
+        } else {
+            false
+        }
+
+        // 연관된 이미지 파일 삭제 시도
+        val baseName = filePath.substringBeforeLast(".")
+        val imagePath = "$baseName.jpg"
+        if (fileManager.fileExistsAtPath(imagePath)) {
+            fileManager.removeItemAtURL(NSURL.fileURLWithPath(imagePath), null)
+        }
+
+        return musicDeleted
     }
 
     private fun downloadInternal(url: String, fileName: String, onResult: (Boolean, String?) -> Unit) {

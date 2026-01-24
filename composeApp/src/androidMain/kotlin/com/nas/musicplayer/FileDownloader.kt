@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import java.io.File
 
 class AndroidFileDownloader(private val context: Context) : FileDownloader {
     
@@ -47,6 +48,19 @@ class AndroidFileDownloader(private val context: Context) : FileDownloader {
             callbacks[downloadId] = onResult
         } catch (e: Exception) {
             onResult(false, e.message)
+        }
+    }
+
+    override fun deleteFile(filePath: String): Boolean {
+        return try {
+            val file = File(filePath)
+            if (file.exists()) {
+                file.delete()
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            false
         }
     }
 }

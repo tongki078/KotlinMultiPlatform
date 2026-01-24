@@ -31,7 +31,8 @@ fun LibraryScreen(
     onNavigateToArtist: (Artist) -> Unit,
     onNavigateToAlbum: (Album) -> Unit,
     onDownloadSong: (Song) -> Unit,
-    downloadingSongIds: Set<Long> = emptySet() // 추가
+    onDeleteSong: (Song) -> Unit, // 삭제 함수 추가
+    downloadingSongIds: Set<Long> = emptySet()
 ) {
     val sheetState = rememberModalBottomSheetState()
     val scope = rememberCoroutineScope()
@@ -78,7 +79,7 @@ fun LibraryScreen(
                     )
                 }
                 
-                items(localSongs.reversed().take(20)) { song -> // 최신순 정렬
+                items(localSongs.reversed().take(20)) { song -> 
                     SongListItem(
                         song = song,
                         onItemClick = { onSongClick(song, localSongs) },
@@ -142,6 +143,13 @@ fun LibraryScreen(
                         sheetState.hide()
                         selectedSongForSheet = null
                         onDownloadSong(currentSong)
+                    }
+                },
+                onDeleteClick = {
+                    scope.launch {
+                        sheetState.hide()
+                        selectedSongForSheet = null
+                        onDeleteSong(currentSong)
                     }
                 }
             )

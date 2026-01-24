@@ -11,6 +11,8 @@ import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -30,7 +32,8 @@ fun SongListItem(
     song: Song, 
     onItemClick: () -> Unit, 
     onMoreClick: () -> Unit,
-    isDownloading: Boolean = false // 다운로드 상태 추가
+    isDownloading: Boolean = false,
+    isDownloaded: Boolean = false // 다운로드 완료 상태 추가
 ) {
     val infiniteTransition = rememberInfiniteTransition()
     val rotation by infiniteTransition.animateFloat(
@@ -59,16 +62,24 @@ fun SongListItem(
                 Text(song.artist, style = MaterialTheme.typography.bodyMedium, color = Color.Gray, maxLines = 1)
             }
             
-            if (isDownloading) {
-                Icon(
-                    Icons.Default.Sync, 
-                    null, 
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp).rotate(rotation)
-                )
-            } else {
-                IconButton(onClick = onMoreClick) {
-                    Icon(Icons.Default.MoreVert, null, tint = Color.Gray)
+            when {
+                isDownloading -> {
+                    Icon(
+                        Icons.Default.Sync, 
+                        null, 
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp).rotate(rotation)
+                    )
+                }
+                isDownloaded -> {
+                    IconButton(onClick = onMoreClick) {
+                        Icon(Icons.Default.CheckCircle, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+                    }
+                }
+                else -> {
+                    IconButton(onClick = onMoreClick) {
+                        Icon(Icons.Default.MoreVert, null, tint = Color.Gray)
+                    }
                 }
             }
         }
@@ -82,7 +93,9 @@ fun MoreOptionsSheet(
     onNavigateToArtist: () -> Unit, 
     onNavigateToAddToPlaylist: (Song) -> Unit, 
     onNavigateToAlbum: () -> Unit,
-    onDownloadClick: () -> Unit
+    onDownloadClick: () -> Unit,
+    onDeleteClick: (() -> Unit)? = null,
+    isDownloaded: Boolean = false // 다운로드 완료 여부 전달
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary
     Column(modifier = Modifier.padding(bottom = 32.dp)) {
@@ -101,12 +114,22 @@ fun MoreOptionsSheet(
         )
         HorizontalDivider(color = Color.LightGray.copy(alpha = 0.3f))
         
-        ListItem(
-            headlineContent = { Text("다운로드") }, 
-            leadingContent = { Icon(Icons.Default.Download, null, tint = primaryColor) }, 
-            modifier = Modifier.clickable { onDownloadClick() },
-            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-        )
+        // 이미 다운로드된 곡이라면 '삭제' 메뉴를, 아니면 '다운로드' 메뉴를 표시
+        if (isDownloaded || onDeleteClick != null) {
+            ListItem(
+                headlineContent = { Text("보관함에서 삭제", color = MaterialTheme.colorScheme.error) }, 
+                leadingContent = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) }, 
+                modifier = Modifier.clickable { onDeleteClick?.invoke() },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+        } else {
+            ListItem(
+                headlineContent = { Text("다운로드") }, 
+                leadingContent = { Icon(Icons.Default.Download, null, tint = primaryColor) }, 
+                modifier = Modifier.clickable { onDownloadClick() },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+        }
 
         ListItem(
             headlineContent = { Text("플레이리스트에 추가") }, 
