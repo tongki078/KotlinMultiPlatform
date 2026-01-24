@@ -19,12 +19,6 @@ object LocalMusicLoader {
             true
         ).firstOrNull() as? String ?: return emptyList()
 
-        val cachePath = NSSearchPathForDirectoriesInDomains(
-            NSCachesDirectory,
-            NSUserDomainMask,
-            true
-        ).firstOrNull() as? String
-
         try {
             val files = fileManager.contentsOfDirectoryAtPath(documentsPath, null)
             
@@ -32,53 +26,39 @@ object LocalMusicLoader {
                 val fileName = it as String
                 val lowerName = fileName.lowercase()
                 
+                // .mp3, .m4a, .wav 파일만 처리 (이미지 파일 제외)
                 if (lowerName.endsWith(".mp3") || lowerName.endsWith(".m4a") || lowerName.endsWith(".wav")) {
                     val fullPath = "$documentsPath/$fileName"
                     val url = NSURL.fileURLWithPath(fullPath)
-                    val asset = AVAsset.assetWithURL(url)
                     
-                    var title: String? = null
-                    var artist: String? = null
-                    var artworkPath: String? = null
-                    
-                    // 1. 파일 메타데이터에서 정보 추출
-                    asset.commonMetadata.forEach { item ->
-                        val metadataItem = item as AVMetadataItem
-                        when (metadataItem.commonKey()) {
-                            AVMetadataCommonKeyTitle -> title = metadataItem.value() as? String
-                            AVMetadataCommonKeyArtist -> artist = metadataItem.value() as? String
-                            AVMetadataCommonKeyArtwork -> {
-                                if (cachePath != null) {
-                                    val data = metadataItem.value() as? NSData
-                                    if (data != null) {
-                                        val artFileName = "art_${fileName.hashCode()}.jpg"
-                                        val artFullPath = "$cachePath/$artFileName"
-                                        data.writeToFile(artFullPath, true)
-                                        artworkPath = artFullPath
-                                    }
-                                }
-                            }
-                        }
+                    // 파일 이름에서 타이틀과 아티스트 분리 시도 ("Artist - Title.mp3")
+                    val baseName = fileName.substringBeforeLast(".")
+                    var displayTitle = baseName
+                    var displayArtist = "보관함"
+
+                    if (baseName.contains(" - ")) {
+                        val parts = baseName.split(" - ", limit = 2)
+                        displayArtist = parts[0].trim()
+                        displayTitle = parts[1].trim()
                     }
 
-                    // 2. 파일 메타데이터에 이미지가 없는 경우, 다운로드 시 저장된 별도 이미지 파일 확인
-                    if (artworkPath == null && cachePath != null) {
-                        val baseName = fileName.substringBeforeLast(".")
-                        val localArtPath = "$cachePath/$baseName.jpg"
-                        if (fileManager.fileExistsAtPath(localArtPath)) {
-                            artworkPath = localArtPath
-                        }
+                    // 이미지 파일 경로 확인 (노래 파일과 동일한 이름의 .jpg)
+                    val artworkPath = "$documentsPath/$baseName.jpg"
+                    val finalArtwork = if (fileManager.fileExistsAtPath(artworkPath)) {
+                        artworkPath
+                    } else {
+                        null
                     }
 
                     songList.add(
                         Song(
                             id = fileName.hashCode().toLong(),
-                            name = title ?: fileName.substringBeforeLast("."),
-                            artist = artist ?: "Local Device",
-                            albumName = "Local Album",
+                            name = displayTitle,
+                            artist = displayArtist,
+                            albumName = "다운로드",
                             streamUrl = fullPath,
                             isDir = false,
-                            metaPoster = artworkPath
+                            metaPoster = finalArtwork
                         )
                     )
                 }
