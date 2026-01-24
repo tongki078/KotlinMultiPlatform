@@ -1,5 +1,7 @@
 package com.nas.musicplayer.ui.music
 
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -10,11 +12,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -25,15 +30,33 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.nas.musicplayer.Album
+import com.nas.musicplayer.Artist
 import com.nas.musicplayer.Song
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AlbumDetailScreen(
     album: Album,
     onBack: () -> Unit,
-    onSongClick: (Song, List<Song>) -> Unit
+    onSongClick: (Song, List<Song>) -> Unit,
+    onDownloadSong: (Song) -> Unit,
+    downloadingSongIds: Set<Long> = emptySet() // 추가: 다운로드 상태 감시용
 ) {
+    val sheetState = rememberModalBottomSheetState()
+    val scope = rememberCoroutineScope()
+    var selectedSongForSheet by remember { mutableStateOf<Song?>(null) }
+
+    val infiniteTransition = rememberInfiniteTransition()
+    val rotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        )
+    )
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -53,16 +76,14 @@ fun AlbumDetailScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                modifier = Modifier.statusBarsPadding() // 상태바 영역 침범 방지
+                modifier = Modifier.statusBarsPadding()
             )
         }
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            // padding.calculateTopPadding()을 사용하지 않고 직접 조절하거나 
-            // Scaffold padding을 적용하여 상태바/탑바 아래서 시작하게 함
             contentPadding = PaddingValues(
-                top = 0.dp, // TopAppBar가 Transparent이므로 0으로 설정하여 뒤로 비치게 할 수 있음
+                top = 0.dp,
                 bottom = padding.calculateBottomPadding() + 100.dp
             )
         ) {
@@ -138,6 +159,7 @@ fun AlbumDetailScreen(
             }
             
             itemsIndexed(album.songs) { index, song ->
+                val isDownloading = downloadingSongIds.contains(song.id)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -169,12 +191,22 @@ fun AlbumDetailScreen(
                             )
                         }
                     }
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = Color.LightGray.copy(alpha = 0.6f)
-                    )
+                    
+                    if (isDownloading) {
+                        Icon(
+                            Icons.Default.Sync, 
+                            null, 
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp).rotate(rotation)
+                        )
+                    } else {
+                        IconButton(onClick = { 
+                            selectedSongForSheet = song
+                            scope.launch { sheetState.show() }
+                        }) {
+                            Icon(Icons.Default.MoreVert, null, tint = Color.Gray)
+                        }
+                    }
                 }
                 HorizontalDivider(
                     modifier = Modifier.padding(start = 52.dp, end = 16.dp),
@@ -182,6 +214,28 @@ fun AlbumDetailScreen(
                     color = Color.LightGray.copy(alpha = 0.2f)
                 )
             }
+        }
+    }
+
+    if (selectedSongForSheet != null) {
+        val currentSong = selectedSongForSheet!!
+        ModalBottomSheet(
+            onDismissRequest = { selectedSongForSheet = null },
+            sheetState = sheetState
+        ) {
+            MoreOptionsSheet(
+                song = currentSong,
+                onNavigateToArtist = { /* App.kt 연동 */ },
+                onNavigateToAddToPlaylist = { /* App.kt 연동 */ },
+                onNavigateToAlbum = { /* App.kt 연동 */ },
+                onDownloadClick = {
+                    scope.launch {
+                        sheetState.hide()
+                        selectedSongForSheet = null
+                        onDownloadSong(currentSong)
+                    }
+                }
+            )
         }
     }
 }

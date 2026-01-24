@@ -1,21 +1,25 @@
 package com.nas.musicplayer.ui.music
 
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -25,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.nas.musicplayer.Artist
 import com.nas.musicplayer.Song
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,8 +37,24 @@ fun ArtistDetailScreen(
     artist: Artist,
     onBack: () -> Unit,
     onSongClick: (Song, List<Song>) -> Unit,
-    onPlayAllClick: (List<Song>) -> Unit
+    onPlayAllClick: (List<Song>) -> Unit,
+    onDownloadSong: (Song) -> Unit,
+    downloadingSongIds: Set<Long> = emptySet() // 추가
 ) {
+    val sheetState = rememberModalBottomSheetState()
+    val scope = rememberCoroutineScope()
+    var selectedSongForSheet by remember { mutableStateOf<Song?>(null) }
+
+    val infiniteTransition = rememberInfiniteTransition()
+    val rotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        )
+    )
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -130,6 +151,7 @@ fun ArtistDetailScreen(
             }
 
             itemsIndexed(artist.popularSongs) { index, song ->
+                val isDownloading = downloadingSongIds.contains(song.id)
                 ListItem(
                     headlineContent = { Text(song.name ?: "Unknown", fontWeight = FontWeight.Medium) },
                     supportingContent = { Text(song.albumName) },
@@ -137,17 +159,48 @@ fun ArtistDetailScreen(
                         Text("${index + 1}", modifier = Modifier.width(20.dp), color = Color.Gray)
                     },
                     trailingContent = {
-                        AsyncImage(
-                            model = song.metaPoster ?: song.streamUrl,
-                            contentDescription = null,
-                            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(4.dp)),
-                            contentScale = ContentScale.Crop
-                        )
+                        if (isDownloading) {
+                            Icon(
+                                Icons.Default.Sync, 
+                                null, 
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp).rotate(rotation)
+                            )
+                        } else {
+                            IconButton(onClick = {
+                                selectedSongForSheet = song
+                                scope.launch { sheetState.show() }
+                            }) {
+                                Icon(Icons.Default.MoreVert, null, tint = Color.Gray)
+                            }
+                        }
                     },
                     modifier = Modifier.clickable { onSongClick(song, artist.popularSongs) }
                 )
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp, color = Color.LightGray.copy(alpha = 0.3f))
             }
+        }
+    }
+
+    if (selectedSongForSheet != null) {
+        val currentSong = selectedSongForSheet!!
+        ModalBottomSheet(
+            onDismissRequest = { selectedSongForSheet = null },
+            sheetState = sheetState
+        ) {
+            MoreOptionsSheet(
+                song = currentSong,
+                onNavigateToArtist = { /* App.kt 연동 */ },
+                onNavigateToAddToPlaylist = { /* App.kt 연동 */ },
+                onNavigateToAlbum = { /* App.kt 연동 */ },
+                onDownloadClick = {
+                    scope.launch {
+                        sheetState.hide()
+                        selectedSongForSheet = null
+                        onDownloadSong(currentSong)
+                    }
+                }
+            )
         }
     }
 }

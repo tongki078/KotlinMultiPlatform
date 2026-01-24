@@ -15,6 +15,7 @@ class MusicPlayerViewModel(
 ) : BaseViewModel() {
 
     private val musicApiService = MusicApiServiceImpl(httpClient)
+    private val fileDownloader = getFileDownloader()
 
     // 가사가 실시간으로 반영될 수 있도록 내부 상태 관리
     private val _currentSongWithLyrics = MutableStateFlow<Song?>(null)
@@ -92,5 +93,23 @@ class MusicPlayerViewModel(
 
     fun setVolume(volume: Float) {
         musicPlayerController.setVolume(volume)
+    }
+
+    /**
+     * 음악 파일을 기기에 다운로드합니다.
+     * 이미지 URL을 함께 전달하여 보관함에서 이미지가 나오도록 개선합니다.
+     */
+    fun downloadSong(song: Song, onResult: (Boolean, String?) -> Unit) {
+        val url = song.streamUrl ?: run {
+            onResult(false, "다운로드 가능한 URL이 없습니다.")
+            return
+        }
+        
+        // 파일명 생성: "아티스트 - 제목.mp3" 형태
+        val fileName = "${song.artist} - ${song.name ?: "제목 없음"}.mp3"
+            .replace(Regex("[\\\\/:*?\"<>|]"), "_") 
+        
+        // 이미지 URL(metaPoster)을 함께 전달
+        fileDownloader.downloadFile(url, song.metaPoster, fileName, onResult)
     }
 }

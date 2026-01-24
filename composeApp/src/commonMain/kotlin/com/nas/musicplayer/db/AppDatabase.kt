@@ -9,7 +9,7 @@ import androidx.room.TypeConverters
 @Database(entities = [PlaylistEntity::class, RecentSearch::class], version = 2, exportSchema = false)
 @TypeConverters(Converters::class)
 @ConstructedBy(AppDatabaseConstructor::class)
-expect abstract class AppDatabase : RoomDatabase {
+abstract class AppDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
     abstract fun recentSearchDao(): RecentSearchDao
 }

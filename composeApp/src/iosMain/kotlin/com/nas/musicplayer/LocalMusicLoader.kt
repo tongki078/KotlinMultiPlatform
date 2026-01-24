@@ -19,8 +19,6 @@ object LocalMusicLoader {
             true
         ).firstOrNull() as? String ?: return emptyList()
 
-        NSLog("ACTUAL_PATH_START: %s", documentsPath)
-
         val cachePath = NSSearchPathForDirectoriesInDomains(
             NSCachesDirectory,
             NSUserDomainMask,
@@ -43,7 +41,7 @@ object LocalMusicLoader {
                     var artist: String? = null
                     var artworkPath: String? = null
                     
-                    // 제목 및 아티스트 메타데이터 추출
+                    // 1. 파일 메타데이터에서 정보 추출
                     asset.commonMetadata.forEach { item ->
                         val metadataItem = item as AVMetadataItem
                         when (metadataItem.commonKey()) {
@@ -60,6 +58,15 @@ object LocalMusicLoader {
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    // 2. 파일 메타데이터에 이미지가 없는 경우, 다운로드 시 저장된 별도 이미지 파일 확인
+                    if (artworkPath == null && cachePath != null) {
+                        val baseName = fileName.substringBeforeLast(".")
+                        val localArtPath = "$cachePath/$baseName.jpg"
+                        if (fileManager.fileExistsAtPath(localArtPath)) {
+                            artworkPath = localArtPath
                         }
                     }
 

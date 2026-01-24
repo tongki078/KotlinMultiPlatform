@@ -29,7 +29,9 @@ fun LibraryScreen(
     onNavigateToAddToPlaylist: (Song) -> Unit,
     onNavigateToPlaylists: () -> Unit,
     onNavigateToArtist: (Artist) -> Unit,
-    onNavigateToAlbum: (Album) -> Unit
+    onNavigateToAlbum: (Album) -> Unit,
+    onDownloadSong: (Song) -> Unit,
+    downloadingSongIds: Set<Long> = emptySet() // 추가
 ) {
     val sheetState = rememberModalBottomSheetState()
     val scope = rememberCoroutineScope()
@@ -41,13 +43,12 @@ fun LibraryScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 0.dp), // 좌우 여백 제거하여 꽉 차게
+                .padding(horizontal = 0.dp),
             contentPadding = PaddingValues(
                 top = padding.calculateTopPadding() + 16.dp, 
                 bottom = 16.dp
             )
         ) {
-            // 1. 애플 뮤직 스타일의 대형 타이틀 (스크롤 가능)
             item {
                 Text(
                     text = "보관함",
@@ -57,7 +58,6 @@ fun LibraryScreen(
                 )
             }
 
-            // 2. 카테고리 메뉴 섹션 (위쪽부터 밀착 배치)
             item {
                 Column {
                     LibraryMenuItem("플레이리스트", Icons.Default.QueueMusic, onClick = onNavigateToPlaylists)
@@ -68,7 +68,6 @@ fun LibraryScreen(
                 }
             }
 
-            // 3. 파일 유무에 따른 섹션 처리
             if (localSongs.isNotEmpty()) {
                 item {
                     Text(
@@ -79,18 +78,18 @@ fun LibraryScreen(
                     )
                 }
                 
-                items(localSongs.take(20)) { song -> 
+                items(localSongs.reversed().take(20)) { song -> // 최신순 정렬
                     SongListItem(
                         song = song,
                         onItemClick = { onSongClick(song, localSongs) },
                         onMoreClick = { 
                             selectedSongForSheet = song
                             scope.launch { sheetState.show() }
-                        }
+                        },
+                        isDownloading = downloadingSongIds.contains(song.id)
                     )
                 }
             } else {
-                // 메뉴 바로 아래에 가벼운 안내 문구 배치
                 item {
                     Column(
                         modifier = Modifier
@@ -136,6 +135,13 @@ fun LibraryScreen(
                         sheetState.hide()
                         selectedSongForSheet = null
                         onNavigateToAlbum(Album(name = currentSong.albumName, artist = currentSong.artist, imageUrl = currentSong.metaPoster ?: currentSong.streamUrl))
+                    }
+                },
+                onDownloadClick = {
+                    scope.launch {
+                        sheetState.hide()
+                        selectedSongForSheet = null
+                        onDownloadSong(currentSong)
                     }
                 }
             )

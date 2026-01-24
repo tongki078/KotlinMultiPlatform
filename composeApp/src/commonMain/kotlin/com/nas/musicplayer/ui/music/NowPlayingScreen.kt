@@ -42,6 +42,7 @@ import com.nas.musicplayer.*
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.Airplay
+import androidx.compose.material.icons.filled.Download
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -51,7 +52,8 @@ fun NowPlayingScreen(
     onBack: () -> Unit,
     onNavigateToArtist: (Artist) -> Unit,
     onNavigateToAlbum: (Album) -> Unit,
-    onNavigateToAddToPlaylist: (Song) -> Unit
+    onNavigateToAddToPlaylist: (Song) -> Unit,
+    onDownloadSong: (Song) -> Unit // 추가
 ) {
     val song by viewModel.currentSong.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
@@ -341,6 +343,19 @@ fun NowPlayingScreen(
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                 )
                 HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+                
+                ListItem(
+                    headlineContent = { Text("다운로드", color = Color.White) },
+                    leadingContent = { Icon(Icons.Default.Download, null, tint = Color.White) },
+                    modifier = Modifier.clickable { 
+                        scope.launch { sheetState.hide() }.invokeOnCompletion {
+                            showMoreSheet = false
+                            onDownloadSong(currentSong)
+                        }
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+
                 ListItem(
                     headlineContent = { Text("플레이리스트에 추가", color = Color.White) },
                     leadingContent = { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, null, tint = Color.White) },

@@ -22,6 +22,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.nas.musicplayer.ui.music.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -33,12 +34,17 @@ fun App(
     isVoiceFinal: Boolean = false,
     isVoiceSearching: Boolean = false,
     onVoiceSearchClick: () -> Unit = {},
-    onVoiceQueryConsumed: () -> Unit = {}
+    onVoiceQueryConsumed: () -> Unit = {},
+    onRefreshLocalSongs: () -> Unit = {}
 ) {
     val searchViewModel: MusicSearchViewModel = viewModel(
         factory = MusicSearchViewModel.Factory(musicRepository)
     )
     
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val uiState by searchViewModel.uiState.collectAsState()
+
     LaunchedEffect(localSongs) {
         searchViewModel.setLocalSongs(localSongs)
     }
@@ -90,8 +96,26 @@ fun App(
     val currentSong by musicPlayerViewModel.currentSong.collectAsState()
     val isPlaying by musicPlayerViewModel.isPlaying.collectAsState()
 
+    // 공통 다운로드 함수
+    val onDownloadSong: (Song) -> Unit = { song ->
+        searchViewModel.startDownloading(song.id)
+        musicPlayerViewModel.downloadSong(song) { success, message ->
+            searchViewModel.stopDownloading(song.id)
+            if (success) {
+                onRefreshLocalSongs()
+            }
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    message = message ?: if (success) "보관함에 추가되었습니다." else "다운로드 실패",
+                    duration = SnackbarDuration.Short
+                )
+            }
+        }
+    }
+
     MaterialTheme {
         Scaffold(
+            snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
                 val route = currentRoute ?: ""
                 val isFullScreen = route == "player" || route.startsWith("add_to_playlist")
@@ -174,6 +198,8 @@ fun App(
                             onNavigateToAlbum = { album -> navController.navigate("album_detail/${album.name}/${album.artist}") },
                             onNavigateToAddToPlaylist = { song -> navController.navigate("add_to_playlist/${song.id}") },
                             onVoiceSearchClick = onVoiceSearchClick,
+                            onDownloadSong = onDownloadSong,
+                            downloadingSongIds = uiState.downloadingSongIds, // 누락된 상태 전달
                             isVoiceSearching = isVoiceSearching
                         )
                     }
@@ -184,7 +210,9 @@ fun App(
                             onNavigateToAddToPlaylist = { song -> navController.navigate("add_to_playlist/${song.id}") },
                             onNavigateToPlaylists = { navController.navigate("playlists") },
                             onNavigateToArtist = { artist -> navController.navigate("artist_detail/${artist.name}") },
-                            onNavigateToAlbum = { album -> navController.navigate("album_detail/${album.name}/${album.artist}") }
+                            onNavigateToAlbum = { album -> navController.navigate("album_detail/${album.name}/${album.artist}") },
+                            onDownloadSong = onDownloadSong,
+                            downloadingSongIds = uiState.downloadingSongIds // 상태 전달
                         )
                     }
                     composable("playlists") {
@@ -221,7 +249,6 @@ fun App(
                             searchViewModel.loadAlbumDetails(albumName, artistName)
                         }
 
-                        val uiState by searchViewModel.uiState.collectAsState()
                         if (uiState.isAlbumLoading && uiState.selectedAlbum == null) {
                             MusicLoadingScreen()
                         } else {
@@ -229,7 +256,9 @@ fun App(
                                 AlbumDetailScreen(
                                     album = album,
                                     onBack = { navController.popBackStack() },
-                                    onSongClick = { song, list -> musicPlayerViewModel.playSong(song, list) }
+                                    onSongClick = { song, list -> musicPlayerViewModel.playSong(song, list) },
+                                    onDownloadSong = onDownloadSong,
+                                    downloadingSongIds = uiState.downloadingSongIds
                                 )
                             }
                         }
@@ -244,7 +273,6 @@ fun App(
                             searchViewModel.loadArtistDetails(artistName) 
                         }
                         
-                        val uiState by searchViewModel.uiState.collectAsState()
                         if (uiState.isArtistLoading && uiState.selectedArtist == null) {
                             MusicLoadingScreen()
                         } else {
@@ -253,7 +281,9 @@ fun App(
                                     artist = artist,
                                     onBack = { navController.popBackStack() },
                                     onSongClick = { song, list -> musicPlayerViewModel.playSong(song, list) },
-                                    onPlayAllClick = { list -> if (list.isNotEmpty()) musicPlayerViewModel.playSong(list.first(), list) }
+                                    onPlayAllClick = { list -> if (list.isNotEmpty()) musicPlayerViewModel.playSong(list.first(), list) },
+                                    onDownloadSong = onDownloadSong,
+                                    downloadingSongIds = uiState.downloadingSongIds
                                 )
                             }
                         }
@@ -264,7 +294,8 @@ fun App(
                             onBack = { navController.popBackStack() },
                             onNavigateToArtist = { artist -> navController.navigate("artist_detail/${artist.name}") },
                             onNavigateToAlbum = { album -> navController.navigate("album_detail/${album.name}/${album.artist}") },
-                            onNavigateToAddToPlaylist = { song -> navController.navigate("add_to_playlist/${song.id}") }
+                            onNavigateToAddToPlaylist = { song -> navController.navigate("add_to_playlist/${song.id}") },
+                            onDownloadSong = onDownloadSong
                         )
                     }
                     composable(

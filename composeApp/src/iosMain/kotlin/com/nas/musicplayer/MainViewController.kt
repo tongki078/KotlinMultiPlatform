@@ -15,12 +15,17 @@ fun MainViewController() = ComposeUIViewController {
     // 로컬 곡 목록 상태 관리
     var localSongsState by remember { mutableStateOf(emptyList<Song>()) }
     
-    // 앱 시작 시 로컬 곡 로드 및 로그 출력 보장
-    LaunchedEffect(Unit) {
-        println("MainViewController: Triggering LocalMusicLoader...")
+    // 로컬 곡 로드 함수 정의
+    fun refreshSongs() {
+        println("MainViewController: Refreshing local songs...")
         val songs = LocalMusicLoader.loadLocalMusic()
         localSongsState = songs
-        println("MainViewController: Load sequence complete. Songs found: ${songs.size}")
+        println("MainViewController: Refresh complete. Count: ${songs.size}")
+    }
+
+    // 초기 로드
+    LaunchedEffect(Unit) {
+        refreshSongs()
     }
 
     var voiceQuery by remember { mutableStateOf("") }
@@ -31,7 +36,6 @@ fun MainViewController() = ComposeUIViewController {
         VoiceSearchHelper(
             onResult = { text, final -> 
                 if (final) {
-                    println("iOS MainVC: Final result received. Text: '$text'")
                     if (text.isNotBlank()) {
                         voiceQuery = text
                     }
@@ -44,7 +48,6 @@ fun MainViewController() = ComposeUIViewController {
                 }
             },
             onError = { 
-                println("iOS Voice Search Error: $it")
                 isVoiceSearching = false
                 isVoiceFinal = true 
             }
@@ -67,6 +70,10 @@ fun MainViewController() = ComposeUIViewController {
         onVoiceQueryConsumed = { 
             voiceQuery = ""
             isVoiceFinal = false
+        },
+        onRefreshLocalSongs = {
+            // 다운로드 완료 시 여기서 호출됨
+            refreshSongs()
         }
     )
 }

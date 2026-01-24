@@ -26,7 +26,8 @@ data class MusicSearchUiState(
     val selectedAlbum: Album? = null,
     val isAlbumLoading: Boolean = false,
     val recentSearches: List<RecentSearch> = emptyList(),
-    val albums: List<Album> = emptyList()
+    val albums: List<Album> = emptyList(),
+    val downloadingSongIds: Set<Long> = emptySet() // 다운로드 중인 곡 ID 목록 추가
 )
 
 class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel() {
@@ -87,14 +88,12 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
             return
         }
 
-        // 1. 로컬 곡 즉시 검색
         val localResults = allLocalSongs.filter {
             (it.name?.contains(trimmedQuery, ignoreCase = true) == true) ||
             it.artist.contains(trimmedQuery, ignoreCase = true) ||
             it.albumName.contains(trimmedQuery, ignoreCase = true)
         }
         
-        // 중요: 로컬 결과를 즉시 반영하되, 서버 검색이 남았으므로 isLoading을 true로 확실히 유지
         _uiState.update { it.copy(
             searchQuery = trimmedQuery, 
             songs = localResults,
@@ -106,24 +105,26 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
             repository.addRecentSearch(trimmedQuery, timestamp)
 
             try {
-                // 서버에서 데이터 가져오기
                 val networkResult = musicApiService.search(trimmedQuery).toSongList()
                     .filter { !it.isDir }
                     .map { cleanSongInfo(it) }
                     .distinctBy { it.name }
                 
-                // 중복 제거 기준을 iOS에서 더 안정적인 방식으로 통일
-                val finalResult = (localResults + networkResult).distinctBy { 
-                    "${it.name}_${it.artist}" 
-                }
-                
-                // 서버 검색까지 완전히 끝난 후에만 isLoading = false
+                val finalResult = (localResults + networkResult).distinctBy { it.name + it.artist }
                 _uiState.update { it.copy(songs = finalResult, isLoading = false) }
             } catch (e: Exception) {
-                // 에러 발생 시에도 로딩 상태 해제하여 UI 멈춤 방지
                 _uiState.update { it.copy(isLoading = false) }
             }
         }
+    }
+
+    // 다운로드 상태 관리 함수 추가
+    fun startDownloading(songId: Long) {
+        _uiState.update { it.copy(downloadingSongIds = it.downloadingSongIds + songId) }
+    }
+
+    fun stopDownloading(songId: Long) {
+        _uiState.update { it.copy(downloadingSongIds = it.downloadingSongIds - songId) }
     }
 
     private fun cleanSongInfo(song: Song): Song {

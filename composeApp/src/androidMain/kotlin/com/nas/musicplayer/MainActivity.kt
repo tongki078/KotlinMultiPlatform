@@ -40,6 +40,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
+        // 파일 다운로더 초기화
+        initAndroidDownloader(this)
+
         if (SpeechRecognizer.isRecognitionAvailable(this)) {
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
         }
@@ -69,6 +72,10 @@ class MainActivity : ComponentActivity() {
                 onVoiceQueryConsumed = { 
                     voiceSearchQuery = ""
                     isVoiceFinal = false
+                },
+                onRefreshLocalSongs = {
+                    // 다운로드 완료 시 안드로이드 미디어 스캔 및 목록 갱신
+                    scanAndLoadMusic()
                 }
             )
         }

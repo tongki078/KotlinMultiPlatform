@@ -46,6 +46,8 @@ fun MusicSearchScreen(
     onSongClick: (Song) -> Unit,
     onNavigateToPlaylists: () -> Unit,
     onVoiceSearchClick: () -> Unit,
+    onDownloadSong: (Song) -> Unit,
+    downloadingSongIds: Set<Long> = emptySet(), // 추가
     isVoiceSearching: Boolean = false,
     viewModel: MusicSearchViewModel,
     bottomPadding: Dp = 0.dp 
@@ -168,7 +170,6 @@ fun MusicSearchScreen(
             }
         }
 
-        // iOS 가시성 최적화: 서버 로딩 바
         AnimatedVisibility(
             visible = uiState.isLoading && uiState.songs.isNotEmpty(),
             enter = fadeIn() + expandVertically(),
@@ -177,10 +178,10 @@ fun MusicSearchScreen(
             LinearProgressIndicator(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(4.dp) // 높이를 더 키움
+                    .height(4.dp)
                     .padding(horizontal = 16.dp, vertical = 2.dp),
                 color = primaryColor,
-                trackColor = primaryColor.copy(alpha = 0.2f) // 배경을 확실히 보이게 함
+                trackColor = primaryColor.copy(alpha = 0.2f)
             )
         }
         
@@ -228,7 +229,6 @@ fun MusicSearchScreen(
                         contentPadding = PaddingValues(bottom = 16.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        // 서버 검색 중 안내 메시지 아이템
                         if (uiState.isLoading && uiState.songs.isNotEmpty()) {
                             item {
                                 Row(
@@ -262,7 +262,8 @@ fun MusicSearchScreen(
                                 onMoreClick = {
                                     selectedSongForSheet = song
                                     scope.launch { sheetState.show() }
-                                }
+                                },
+                                isDownloading = downloadingSongIds.contains(song.id) // 상태 전달
                             )
                         }
                     }
@@ -317,6 +318,13 @@ fun MusicSearchScreen(
                         sheetState.hide()
                         selectedSongForSheet = null
                         onNavigateToAlbum(Album(name = currentSong.albumName, artist = currentSong.artist, imageUrl = currentSong.metaPoster ?: currentSong.streamUrl))
+                    }
+                },
+                onDownloadClick = {
+                    scope.launch {
+                        sheetState.hide()
+                        selectedSongForSheet = null
+                        onDownloadSong(currentSong)
                     }
                 }
             )
