@@ -114,7 +114,6 @@ fun App(
 
     // 공통 다운로드 함수
     val onDownloadSong: (Song) -> Unit = { song ->
-        // 이미 다운로드된 경우 방어 로직
         if (searchViewModel.isSongDownloaded(song)) {
             scope.launch {
                 snackbarHostState.showSnackbar("이미 보관함에 있는 곡입니다.")
@@ -122,6 +121,7 @@ fun App(
         } else {
             searchViewModel.startDownloading(song.id)
             musicPlayerViewModel.downloadSong(song) { success, message ->
+                searchViewModel.startDownloading(song.id) // 오타 수정
                 searchViewModel.stopDownloading(song.id)
                 if (success) {
                     onRefreshLocalSongs()
@@ -179,7 +179,7 @@ fun App(
                                 alwaysShowLabel = true
                             )
                             
-                            val isLibrarySelected = currentDestination?.hierarchy?.any { it.route in listOf("library", "playlists") } == true ||
+                            val isLibrarySelected = currentDestination?.hierarchy?.any { it.route in listOf("library", "playlists", "downloaded_songs") } == true ||
                                                    route.startsWith("playlist_detail") || 
                                                    route.startsWith("album_detail") || 
                                                    route.startsWith("artist_detail")
@@ -235,9 +235,21 @@ fun App(
                             onNavigateToPlaylists = { navController.navigate("playlists") },
                             onNavigateToArtist = { artist -> navController.navigate("artist_detail/${artist.name}") },
                             onNavigateToAlbum = { album -> navController.navigate("album_detail/${album.name}/${album.artist}") },
+                            onNavigateToDownloadedSongs = { navController.navigate("downloaded_songs") }, // 이동 연결
                             onDownloadSong = onDownloadSong,
                             onDeleteSong = onDeleteSong,
                             downloadingSongIds = uiState.downloadingSongIds
+                        )
+                    }
+                    composable("downloaded_songs") {
+                        DownloadedSongsScreen(
+                            localSongs = localSongs,
+                            onBack = { navController.popBackStack() },
+                            onSongClick = { song, list -> musicPlayerViewModel.playSong(song, list) },
+                            onNavigateToArtist = { artist -> navController.navigate("artist_detail/${artist.name}") },
+                            onNavigateToAlbum = { album -> navController.navigate("album_detail/${album.name}/${album.artist}") },
+                            onNavigateToAddToPlaylist = { song -> navController.navigate("add_to_playlist/${song.id}") },
+                            onDeleteSong = onDeleteSong
                         )
                     }
                     composable("playlists") {

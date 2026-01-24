@@ -30,8 +30,9 @@ fun LibraryScreen(
     onNavigateToPlaylists: () -> Unit,
     onNavigateToArtist: (Artist) -> Unit,
     onNavigateToAlbum: (Album) -> Unit,
+    onNavigateToDownloadedSongs: () -> Unit, // 다운로드된 음악 화면 이동 추가
     onDownloadSong: (Song) -> Unit,
-    onDeleteSong: (Song) -> Unit, // 삭제 함수 추가
+    onDeleteSong: (Song) -> Unit,
     downloadingSongIds: Set<Long> = emptySet()
 ) {
     val sheetState = rememberModalBottomSheetState()
@@ -65,7 +66,7 @@ fun LibraryScreen(
                     LibraryMenuItem("아티스트", Icons.Default.Person, onClick = { /* 구현 예정 */ })
                     LibraryMenuItem("앨범", Icons.Default.Album, onClick = { /* 구현 예정 */ })
                     LibraryMenuItem("노래", Icons.Default.MusicNote, onClick = { /* 구현 예정 */ })
-                    LibraryMenuItem("다운로드됨", Icons.Default.DownloadForOffline, onClick = { /* 구현 예정 */ })
+                    LibraryMenuItem("다운로드됨", Icons.Default.DownloadForOffline, onClick = onNavigateToDownloadedSongs)
                 }
             }
 
@@ -87,7 +88,8 @@ fun LibraryScreen(
                             selectedSongForSheet = song
                             scope.launch { sheetState.show() }
                         },
-                        isDownloading = downloadingSongIds.contains(song.id)
+                        isDownloading = downloadingSongIds.contains(song.id),
+                        isDownloaded = true
                     )
                 }
             } else {
@@ -121,7 +123,7 @@ fun LibraryScreen(
                     scope.launch { 
                         sheetState.hide()
                         selectedSongForSheet = null
-                        onNavigateToArtist(Artist(name = currentSong.artist, imageUrl = currentSong.metaPoster ?: currentSong.streamUrl))
+                        onNavigateToArtist(Artist(name = currentSong.artist, imageUrl = currentSong.metaPoster))
                     }
                 },
                 onNavigateToAddToPlaylist = {
@@ -135,7 +137,7 @@ fun LibraryScreen(
                     scope.launch {
                         sheetState.hide()
                         selectedSongForSheet = null
-                        onNavigateToAlbum(Album(name = currentSong.albumName, artist = currentSong.artist, imageUrl = currentSong.metaPoster ?: currentSong.streamUrl))
+                        onNavigateToAlbum(Album(name = currentSong.albumName, artist = currentSong.artist, imageUrl = currentSong.metaPoster))
                     }
                 },
                 onDownloadClick = {
@@ -151,7 +153,8 @@ fun LibraryScreen(
                         selectedSongForSheet = null
                         onDeleteSong(currentSong)
                     }
-                }
+                },
+                isDownloaded = true
             )
         }
     }
