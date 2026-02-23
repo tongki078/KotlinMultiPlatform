@@ -2,10 +2,14 @@ package com.nas.musicplayer.ui.music
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -25,14 +29,17 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
 import com.nas.musicplayer.*
 import com.nas.musicplayer.db.RecentSearch
 import kotlinx.coroutines.launch
@@ -43,6 +50,7 @@ fun MusicSearchScreen(
     onNavigateToArtist: (Artist) -> Unit,
     onNavigateToAddToPlaylist: (Song) -> Unit,
     onNavigateToAlbum: (Album) -> Unit,
+    onNavigateToTheme: (Theme) -> Unit,
     onSongClick: (Song) -> Unit,
     onNavigateToPlaylists: () -> Unit,
     onVoiceSearchClick: () -> Unit,
@@ -158,8 +166,29 @@ fun MusicSearchScreen(
         }
 
         Box(modifier = Modifier.weight(1f)) {
-            // 1. 배경 컨텐츠: Top 100 리스트 또는 검색 결과
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+                // 상단 테마 가로 리스트
+                if (uiState.themes.isNotEmpty() && !isSearchFocused && uiState.searchQuery.isEmpty()) {
+                    item {
+                        Column(modifier = Modifier.padding(vertical = 12.dp)) {
+                            Text(
+                                text = "추천 테마",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+                            )
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                items(uiState.themes) { theme ->
+                                    ThemeItem(theme = theme, onClick = { onNavigateToTheme(theme) })
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 검색 결과 리스트
                 items(uiState.songs, key = { it.id.toString() + it.name + it.artist }) { song ->
                     SongListItem(
                         song = song,
@@ -174,14 +203,12 @@ fun MusicSearchScreen(
                 }
             }
             
-            // 로딩 화면 (결과 위에 덮음)
             if (uiState.isLoading && uiState.songs.isEmpty()) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     MusicLoadingScreen()
                 }
             }
 
-            // 결과 없음 화면 (결과 위에 덮음)
             if (uiState.songs.isEmpty() && uiState.searchQuery.isNotEmpty() && !isSearchFocused && !uiState.isLoading) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     Column(
@@ -197,8 +224,6 @@ fun MusicSearchScreen(
                 }
             }
 
-            // 2. 오버레이 컨텐츠: 최근 검색어 목록 (가장 위에 덮음)
-            // 포커스 중 + 검색어 비어있음 + 검색 기록 있음 일 때만 표시
             if (isSearchFocused && uiState.searchQuery.isEmpty() && uiState.recentSearches.isNotEmpty()) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -265,6 +290,93 @@ fun MusicSearchScreen(
                 isDownloaded = isDownloaded
             )
         }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun SongCardItem(song: Song, onClick: () -> Unit, onLongClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .width(140.dp)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            ),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(140.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center
+        ) {
+            AsyncImage(
+                model = song.metaPoster ?: song.streamUrl,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+            if (song.metaPoster == null) {
+                Icon(
+                    Icons.Default.MusicNote, 
+                    contentDescription = null, 
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = song.name ?: "",
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.Start
+        )
+        Text(
+            text = song.artist,
+            style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.Start
+        )
+    }
+}
+
+@Composable
+fun ThemeItem(theme: Theme, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .width(120.dp)
+            .clickable { onClick() },
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(120.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Default.MusicNote, 
+                contentDescription = null, 
+                modifier = Modifier.size(48.dp),
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = theme.name,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center
+        )
     }
 }
 

@@ -13,12 +13,26 @@ import com.nas.musicplayer.db.RecentSearch
 import com.nas.musicplayer.network.MusicApiServiceImpl
 import com.nas.musicplayer.network.httpClient
 import com.nas.musicplayer.network.toSongList
+import io.ktor.client.call.*
+import io.ktor.client.request.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
+import kotlinx.serialization.Serializable
+
+@Serializable
+data class Theme(val name: String, val path: String)
+
+@Serializable
+data class ThemeDetail(
+    val category_name: String,
+    val songs: List<Song>
+)
 
 data class MusicSearchUiState(
     val songs: List<Song> = emptyList(),
+    val themes: List<Theme> = emptyList(),
+    val themeDetails: List<ThemeDetail> = emptyList(),
     val isLoading: Boolean = false,
     val searchQuery: String = "",
     val selectedArtist: Artist? = null,
@@ -35,12 +49,14 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
 
     private val musicApiService = MusicApiServiceImpl(httpClient)
     private var allLocalSongs: List<Song> = emptyList()
+    private val pythonBaseUrl = "http://192.168.0.2:4444"
 
     private val _uiState = MutableStateFlow(MusicSearchUiState())
     val uiState: StateFlow<MusicSearchUiState> = _uiState.asStateFlow()
 
     init {
         loadTop100()
+        loadThemes()
         viewModelScope.launch {
             repository.recentSearches.collect { searches ->
                 _uiState.update { it.copy(recentSearches = searches) }
@@ -62,7 +78,6 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
     }
 
     private fun updateDownloadedKeys() {
-        // [개선] 비교용 키 생성 시 공백과 특수문자를 제거하여 매칭 확률을 높임
         val keys = allLocalSongs.map { generateMatchKey(it.artist, it.name ?: "") }.toSet()
         _uiState.update { it.copy(downloadedSongKeys = keys) }
     }
@@ -72,7 +87,6 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         return _uiState.value.downloadedSongKeys.contains(key)
     }
 
-    // 비교를 위한 순수 텍스트 키 생성 (공백, 특수문자 제거)
     private fun generateMatchKey(artist: String, title: String): String {
         val cleanArtist = artist.replace(Regex("[^a-zA-Z0-9가-힣ㄱ-ㅎㅏ-ㅣ]"), "").lowercase()
         val cleanTitle = title.replace(Regex("[^a-zA-Z0-9가-힣ㄱ-ㅎㅏ-ㅣ]"), "").lowercase()
@@ -83,6 +97,34 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         _uiState.update { it.copy(searchQuery = query) }
         if (query.isBlank()) {
             loadTop100()
+        }
+    }
+
+    fun loadThemes() {
+        viewModelScope.launch {
+            try {
+                val themes = httpClient.get("$pythonBaseUrl/api/themes").body<List<Theme>>()
+                _uiState.update { it.copy(themes = themes) }
+            } catch (e: Exception) {
+                println("Failed to load themes: ${e.message}")
+            }
+        }
+    }
+
+    fun loadThemeDetails(theme: Theme) {
+        viewModelScope.launch {
+            // 상세 페이지 진입 전 기존 데이터 초기화 및 로딩 시작
+            _uiState.update { it.copy(isLoading = true, themeDetails = emptyList()) }
+            try {
+                val details = httpClient.get("$pythonBaseUrl/api/theme-details/${theme.path}").body<List<ThemeDetail>>()
+                _uiState.update { it.copy(
+                    themeDetails = details, 
+                    isLoading = false 
+                ) }
+            } catch (e: Exception) {
+                println("Failed to load theme details: ${e.message}")
+                _uiState.update { it.copy(isLoading = false) }
+            }
         }
     }
 
@@ -117,7 +159,7 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         _uiState.update { it.copy(
             searchQuery = trimmedQuery, 
             songs = localResults,
-            isLoading = true 
+            isLoading = true
         ) }
 
         viewModelScope.launch {
