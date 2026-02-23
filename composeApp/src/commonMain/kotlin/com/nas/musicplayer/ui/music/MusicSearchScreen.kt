@@ -10,6 +10,9 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -26,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -67,7 +71,6 @@ fun MusicSearchScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     
     var isSearchFocused by remember { mutableStateOf(false) }
-    var lastAppliedQuery by remember { mutableStateOf("") }
 
     val sheetState = rememberModalBottomSheetState()
     val scope = rememberCoroutineScope()
@@ -79,124 +82,87 @@ fun MusicSearchScreen(
         if (!isVoiceSearching && uiState.searchQuery.isNotEmpty()) {
             focusManager.clearFocus()
             keyboardController?.hide()
-            lastAppliedQuery = uiState.searchQuery
         }
     }
 
     val infiniteTransition = rememberInfiniteTransition()
     val micAlpha by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 0.3f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(600, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        )
+        initialValue = 1f, targetValue = 0.3f,
+        animationSpec = infiniteRepeatable(animation = tween(600, easing = LinearEasing), repeatMode = RepeatMode.Reverse)
     )
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding() 
-            .padding(bottom = bottomPadding) 
-            .imePadding()
-            .pointerInput(Unit) {
-                detectTapGestures(onTap = {
-                    focusManager.clearFocus()
-                })
-            }
+        modifier = Modifier.fillMaxSize().statusBarsPadding().padding(bottom = bottomPadding).imePadding()
+            .pointerInput(Unit) { detectTapGestures(onTap = { focusManager.clearFocus() }) }
     ) {
+        // 검색바
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             TextField(
                 value = uiState.searchQuery,
                 onValueChange = { viewModel.onSearchQueryChanged(it) },
-                placeholder = { 
-                    Text(if (isVoiceSearching) "듣고 있습니다..." else "아티스트, 노래, 앨범 등") 
-                },
+                placeholder = { Text(if (isVoiceSearching) "듣고 있습니다..." else "아티스트, 노래, 앨범 등") },
                 leadingIcon = { Icon(Icons.Default.Search, null) },
                 trailingIcon = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (uiState.searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { viewModel.onSearchQueryChanged("") }) {
-                                Icon(Icons.Default.Close, "Clear")
-                            }
+                            IconButton(onClick = { viewModel.onSearchQueryChanged("") }) { Icon(Icons.Default.Close, "Clear") }
                         }
                         IconButton(onClick = onVoiceSearchClick) {
-                            Icon(
-                                imageVector = Icons.Default.Mic, 
-                                contentDescription = "Voice Search", 
-                                tint = if (isVoiceSearching) Color.Red else primaryColor,
-                                modifier = Modifier.graphicsLayer { alpha = if (isVoiceSearching) micAlpha else 1f }
-                            )
+                            Icon(Icons.Default.Mic, null, tint = if (isVoiceSearching) Color.Red else primaryColor,
+                                modifier = Modifier.graphicsLayer { alpha = if (isVoiceSearching) micAlpha else 1f })
                         }
                     }
                 },
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(12.dp))
-                    .onFocusChanged { isSearchFocused = it.isFocused },
+                modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).onFocusChanged { isSearchFocused = it.isFocused },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = {
-                    lastAppliedQuery = uiState.searchQuery
-                    viewModel.performSearch()
-                    focusManager.clearFocus()
-                }),
+                keyboardActions = KeyboardActions(onSearch = { viewModel.performSearch(); focusManager.clearFocus() }),
                 colors = TextFieldDefaults.colors(
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
                     focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                     unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                 )
             )
             
             if (isSearchFocused) {
-                TextButton(onClick = { focusManager.clearFocus() }) {
-                    Text("취소", color = primaryColor)
-                }
+                TextButton(onClick = { focusManager.clearFocus() }) { Text("취소", color = primaryColor) }
             } else {
-                IconButton(onClick = onNavigateToPlaylists) {
-                    Icon(Icons.AutoMirrored.Filled.PlaylistPlay, null, modifier = Modifier.size(32.dp), tint = primaryColor)
-                }
+                IconButton(onClick = onNavigateToPlaylists) { Icon(Icons.AutoMirrored.Filled.PlaylistPlay, null, modifier = Modifier.size(32.dp), tint = primaryColor) }
             }
         }
 
         Box(modifier = Modifier.weight(1f)) {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
-                // 1. 추천 차트
-                if (uiState.themes.isNotEmpty() && !isSearchFocused && uiState.searchQuery.isEmpty()) {
-                    item {
-                        ThemeSection(title = "추천 차트", themes = uiState.themes, onNavigateToTheme = onNavigateToTheme)
+                if (!isSearchFocused && uiState.searchQuery.isEmpty()) {
+                    // 1. 추천 차트
+                    if (uiState.themes.isNotEmpty()) {
+                        item { ThemeSection(title = "추천 차트", themes = uiState.themes, onNavigateToTheme = onNavigateToTheme) }
+                    }
+                    // 2. 추천 모음
+                    if (uiState.collectionThemes.isNotEmpty()) {
+                        item { ThemeSection(title = "추천 모음", themes = uiState.collectionThemes, onNavigateToTheme = onNavigateToTheme) }
+                    }
+                    // 3. 가수별 추천
+                    if (uiState.artistThemes.isNotEmpty()) {
+                        item { ThemeSection(title = "가수별 추천", themes = uiState.artistThemes, onNavigateToTheme = onNavigateToTheme) }
+                    }
+                    // 4. 장르별 보기 (그리드)
+                    if (uiState.genreThemes.isNotEmpty()) {
+                        item {
+                            GenreGridSection(genres = uiState.genreThemes, onGenreClick = onNavigateToTheme)
+                        }
                     }
                 }
 
-                // 2. 추천 모음
-                if (uiState.collectionThemes.isNotEmpty() && !isSearchFocused && uiState.searchQuery.isEmpty()) {
-                    item {
-                        ThemeSection(title = "추천 모음", themes = uiState.collectionThemes, onNavigateToTheme = onNavigateToTheme)
-                    }
-                }
-
-                // 3. 가수별 추천 (랜덤)
-                if (uiState.artistThemes.isNotEmpty() && !isSearchFocused && uiState.searchQuery.isEmpty()) {
-                    item {
-                        ThemeSection(title = "가수별 추천", themes = uiState.artistThemes, onNavigateToTheme = onNavigateToTheme)
-                    }
-                }
-
-                // 검색 결과 리스트
+                // 5. 검색 결과 또는 주간 차트 리스트
                 items(uiState.songs, key = { it.id.toString() + it.name + it.artist }) { song ->
                     SongListItem(
                         song = song,
                         onItemClick = { onSongClick(song) },
-                        onMoreClick = {
-                            selectedSongForSheet = song
-                            scope.launch { sheetState.show() }
-                        },
+                        onMoreClick = { selectedSongForSheet = song; scope.launch { sheetState.show() } },
                         isDownloading = downloadingSongIds.contains(song.id),
                         isDownloaded = viewModel.isSongDownloaded(song)
                     )
@@ -204,42 +170,7 @@ fun MusicSearchScreen(
             }
             
             if (uiState.isLoading && uiState.songs.isEmpty()) {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    MusicLoadingScreen()
-                }
-            }
-
-            if (uiState.songs.isEmpty() && uiState.searchQuery.isNotEmpty() && !isSearchFocused && !uiState.isLoading) {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    Column(
-                        modifier = Modifier.fillMaxSize().padding(32.dp).verticalScroll(rememberScrollState()),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Icon(Icons.Default.SearchOff, null, modifier = Modifier.size(64.dp), tint = Color.LightGray)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text("결과 없음", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold))
-                        Text("'${uiState.searchQuery}'에 대한 결과를 찾을 수 없습니다.", textAlign = TextAlign.Center)
-                    }
-                }
-            }
-
-            if (isSearchFocused && uiState.searchQuery.isEmpty() && uiState.recentSearches.isNotEmpty()) {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    RecentSearchesView(
-                        recentSearches = uiState.recentSearches,
-                        onSearchClick = { 
-                            viewModel.onSearchQueryChanged(it)
-                            viewModel.performSearch(it)
-                            focusManager.clearFocus()
-                        },
-                        onDeleteClick = { viewModel.deleteRecentSearch(it) },
-                        onClearAll = { viewModel.clearAllRecentSearches() }
-                    )
-                }
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { MusicLoadingScreen() }
             }
         }
     }
@@ -250,46 +181,72 @@ fun MusicSearchScreen(
         ModalBottomSheet(onDismissRequest = { selectedSongForSheet = null }, sheetState = sheetState) {
             MoreOptionsSheet(
                 song = currentSong,
-                onNavigateToArtist = {
-                    scope.launch { 
-                        sheetState.hide()
-                        selectedSongForSheet = null
-                        onNavigateToArtist(Artist(name = currentSong.artist, imageUrl = currentSong.metaPoster ?: currentSong.streamUrl))
-                    }
-                },
-                onNavigateToAddToPlaylist = {
-                    scope.launch {
-                        sheetState.hide()
-                        selectedSongForSheet = null
-                        onNavigateToAddToPlaylist(it)
-                    }
-                },
-                onNavigateToAlbum = {
-                    scope.launch {
-                        sheetState.hide()
-                        selectedSongForSheet = null
-                        onNavigateToAlbum(Album(name = currentSong.albumName, artist = currentSong.artist, imageUrl = currentSong.metaPoster ?: currentSong.streamUrl))
-                    }
-                },
-                onDownloadClick = {
-                    scope.launch {
-                        sheetState.hide()
-                        selectedSongForSheet = null
-                        onDownloadSong(currentSong)
-                    }
-                },
-                onDeleteClick = if (isDownloaded) {
-                    {
-                        scope.launch {
-                            sheetState.hide()
-                            selectedSongForSheet = null
-                            onDeleteSong(currentSong)
-                        }
-                    }
-                } else null,
+                onNavigateToArtist = { scope.launch { sheetState.hide(); selectedSongForSheet = null; onNavigateToArtist(Artist(name = currentSong.artist)) } },
+                onNavigateToAddToPlaylist = { scope.launch { sheetState.hide(); selectedSongForSheet = null; onNavigateToAddToPlaylist(it) } },
+                onNavigateToAlbum = { scope.launch { sheetState.hide(); selectedSongForSheet = null; onNavigateToAlbum(Album(name = currentSong.albumName, artist = currentSong.artist)) } },
+                onDownloadClick = { scope.launch { sheetState.hide(); selectedSongForSheet = null; onDownloadSong(currentSong) } },
+                onDeleteClick = if (isDownloaded) { { scope.launch { sheetState.hide(); selectedSongForSheet = null; onDeleteSong(currentSong) } } } else null,
                 isDownloaded = isDownloaded
             )
         }
+    }
+}
+
+@Composable
+fun GenreGridSection(genres: List<Theme>, onGenreClick: (Theme) -> Unit) {
+    val colors = listOf(
+        Pair(Color(0xFFE91E63), Color(0xFFFF80AB)), // 핑크
+        Pair(Color(0xFF9C27B0), Color(0xFFEA80FC)), // 퍼플
+        Pair(Color(0xFF2196F3), Color(0xFF82B1FF)), // 블루
+        Pair(Color(0xFF4CAF50), Color(0xFFB9F6CA)), // 그린
+        Pair(Color(0xFFFF9800), Color(0xFFFFE082))  // 오렌지
+    )
+
+    Column(modifier = Modifier.padding(vertical = 12.dp)) {
+        Text(
+            text = "장르별 보기",
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+        )
+        
+        // 고정 높이 그리드 (5개 항목이므로 3행 예상)
+        Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+            genres.chunked(2).forEachIndexed { rowIndex, rowItems ->
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                    rowItems.forEachIndexed { colIndex, genre ->
+                        val colorIdx = (rowIndex * 2 + colIndex) % colors.size
+                        GenreCard(
+                            genre = genre,
+                            startColor = colors[colorIdx].first,
+                            endColor = colors[colorIdx].second,
+                            modifier = Modifier.weight(1f).padding(end = if (colIndex == 0 && rowItems.size > 1) 12.dp else 0.dp),
+                            onClick = { onGenreClick(genre) }
+                        )
+                    }
+                    if (rowItems.size == 1) {
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun GenreCard(genre: Theme, startColor: Color, endColor: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Box(
+        modifier = modifier
+            .height(100.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Brush.linearGradient(listOf(startColor, endColor)))
+            .clickable { onClick() }
+            .padding(16.dp),
+        contentAlignment = Alignment.BottomStart
+    ) {
+        Text(
+            text = genre.name,
+            style = MaterialTheme.typography.titleMedium.copy(color = Color.White, fontWeight = FontWeight.Bold)
+        )
     }
 }
 
@@ -301,13 +258,8 @@ fun ThemeSection(title: String, themes: List<Theme>, onNavigateToTheme: (Theme) 
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
         )
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            items(themes) { theme ->
-                ThemeItem(theme = theme, onClick = { onNavigateToTheme(theme) })
-            }
+        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(themes) { theme -> ThemeItem(theme = theme, onClick = { onNavigateToTheme(theme) }) }
         }
     }
 }
@@ -315,87 +267,27 @@ fun ThemeSection(title: String, themes: List<Theme>, onNavigateToTheme: (Theme) 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SongCardItem(song: Song, onClick: () -> Unit, onLongClick: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .width(140.dp)
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick
-            ),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .size(140.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center
-        ) {
-            AsyncImage(
-                model = song.metaPoster ?: song.streamUrl,
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
-            )
+    Column(modifier = Modifier.width(140.dp).combinedClickable(onClick = onClick, onLongClick = onLongClick), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(modifier = Modifier.size(140.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+            AsyncImage(model = song.metaPoster ?: song.streamUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             if (song.metaPoster == null) {
-                Icon(
-                    Icons.Default.MusicNote, 
-                    contentDescription = null, 
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-                )
+                Icon(Icons.Default.MusicNote, null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
             }
         }
         Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = song.name ?: "",
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth(),
-            textAlign = TextAlign.Start
-        )
-        Text(
-            text = song.artist,
-            style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth(),
-            textAlign = TextAlign.Start
-        )
+        Text(text = song.name ?: "", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
+        Text(text = song.artist, style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
     }
 }
 
 @Composable
 fun ThemeItem(theme: Theme, onClick: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .width(120.dp)
-            .clickable { onClick() },
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .size(120.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                Icons.Default.MusicNote, 
-                contentDescription = null, 
-                modifier = Modifier.size(48.dp),
-                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-            )
+    Column(modifier = Modifier.width(120.dp).clickable { onClick() }, horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(modifier = Modifier.size(120.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.MusicNote, null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
         }
         Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = theme.name,
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center
-        )
+        Text(text = theme.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium), maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
     }
 }
 
@@ -409,20 +301,13 @@ fun RecentSearchesView(
     val primaryColor = MaterialTheme.colorScheme.primary
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("최근 검색어", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text("지우기", color = primaryColor, fontSize = 14.sp, modifier = Modifier.clickable { onClearAll() })
             }
         }
         items(recentSearches) { search ->
-            Row(
-                modifier = Modifier.fillMaxWidth().clickable { onSearchClick(search.query) }.padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(modifier = Modifier.fillMaxWidth().clickable { onSearchClick(search.query) }.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.History, null, tint = Color.Gray, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(search.query, modifier = Modifier.weight(1f), fontSize = 15.sp)

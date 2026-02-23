@@ -27,7 +27,8 @@ data class Theme(val name: String, val path: String)
 data class ThemeResponse(
     val charts: List<Theme>,
     val collections: List<Theme>,
-    val artists: List<Theme> = emptyList()
+    val artists: List<Theme> = emptyList(),
+    val genres: List<Theme> = emptyList()
 )
 
 @Serializable
@@ -41,6 +42,7 @@ data class MusicSearchUiState(
     val themes: List<Theme> = emptyList(),
     val collectionThemes: List<Theme> = emptyList(),
     val artistThemes: List<Theme> = emptyList(),
+    val genreThemes: List<Theme> = emptyList(),
     val themeDetails: List<ThemeDetail> = emptyList(),
     val isLoading: Boolean = false,
     val searchQuery: String = "",
@@ -116,7 +118,8 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
                 _uiState.update { it.copy(
                     themes = response.charts,
                     collectionThemes = response.collections,
-                    artistThemes = response.artists
+                    artistThemes = response.artists,
+                    genreThemes = response.genres
                 ) }
             } catch (e: Exception) {
                 println("Failed to load themes: ${e.message}")
@@ -142,51 +145,52 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
 
     fun loadTop100() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, searchQuery = "") }
+            _uiState.update { it.copy(isLoading = true, searchQuery = "", songs = emptyList(), themeDetails = emptyList()) }
             try {
-                val top100Songs = musicApiService.getTop100().toSongList()
-                    .filter { !it.isDir }
-                    .map { cleanSongInfo(it) }
-                    .distinctBy { it.name }
-                _uiState.update { it.copy(songs = top100Songs, isLoading = false) }
+                val response = httpClient.get("$pythonBaseUrl/api/top100").body<List<Song>>()
+                val pythonWeeklySongs = response.map { 
+                    it.copy(id = (it.streamUrl ?: (it.name ?: "" + it.artist)).hashCode().toLong()) 
+                }
+                
+                if (pythonWeeklySongs.isNotEmpty()) {
+                    _uiState.update { it.copy(songs = pythonWeeklySongs, isLoading = false) }
+                } else {
+                    _uiState.update { it.copy(isLoading = false) }
+                }
             } catch (e: Exception) {
+                println("Top100 Load Error: ${e.message}")
                 _uiState.update { it.copy(isLoading = false) }
             }
         }
     }
 
     fun performSearch(query: String = _uiState.value.searchQuery) {
-        val trimmedQuery = query.trim().replace(Regex("\\.$"), "")
+        val trimmedQuery = query.trim()
         if (trimmedQuery.isBlank()) {
             loadTop100()
             return
         }
 
-        val localResults = allLocalSongs.filter {
-            (it.name?.contains(trimmedQuery, ignoreCase = true) == true) ||
-            it.artist.contains(trimmedQuery, ignoreCase = true) ||
-            it.albumName.contains(trimmedQuery, ignoreCase = true)
-        }
-        
-        _uiState.update { it.copy(
-            searchQuery = trimmedQuery, 
-            songs = localResults,
-            isLoading = true
-        ) }
+        _uiState.update { it.copy(searchQuery = trimmedQuery, isLoading = true, songs = emptyList()) }
 
         viewModelScope.launch {
             val timestamp = Clock.System.now().toEpochMilliseconds()
             repository.addRecentSearch(trimmedQuery, timestamp)
 
             try {
+                val pythonResults = httpClient.get("$pythonBaseUrl/api/search") {
+                    parameter("q", trimmedQuery)
+                }.body<List<Song>>().map { it.copy(id = (it.streamUrl ?: (it.name ?: "" + it.artist)).hashCode().toLong()) }
+
                 val networkResult = musicApiService.search(trimmedQuery).toSongList()
                     .filter { !it.isDir }
                     .map { cleanSongInfo(it) }
-                    .distinctBy { it.name }
+
+                val finalResult = (pythonResults + networkResult).distinctBy { "${it.name}-${it.artist}" }
                 
-                val finalResult = (localResults + networkResult).distinctBy { it.name + it.artist }
                 _uiState.update { it.copy(songs = finalResult, isLoading = false) }
             } catch (e: Exception) {
+                println("Search error: ${e.message}")
                 _uiState.update { it.copy(isLoading = false) }
             }
         }
@@ -213,35 +217,16 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
             song.copy(
                 name = titlePart,
                 artist = artistPart,
-                albumName = extractAlbumName(song)
+                albumName = song.albumName
             )
         } else {
-            val folderInfo = extractAlbumAndArtistFromPath(song)
-            song.copy(
-                name = cleanName,
-                artist = folderInfo.first,
-                albumName = folderInfo.second
-            )
+            song.copy(name = cleanName)
         }
 
         return if (cleanedSong.id == 0L) {
-            cleanedSong.copy(id = (cleanedSong.streamUrl ?: cleanedSong.name).hashCode().toLong())
+            cleanedSong.copy(id = (cleanedSong.streamUrl ?: (cleanedSong.name ?: "" + cleanedSong.artist)).hashCode().toLong())
         } else {
             cleanedSong
-        }
-    }
-
-    private fun extractAlbumName(song: Song): String {
-        return song.parentPath?.split("/")?.lastOrNull()?.replace("MUSIC/", "") ?: "Unknown Album"
-    }
-
-    private fun extractAlbumAndArtistFromPath(song: Song): Pair<String, String> {
-        val pathParts = song.parentPath?.split("/")?.filter { it.isNotBlank() } ?: emptyList()
-        val lastFolder = pathParts.lastOrNull() ?: "Unknown"
-        return if (pathParts.size >= 2) {
-            Pair(pathParts[pathParts.size - 2], lastFolder)
-        } else {
-            Pair(lastFolder, lastFolder)
         }
     }
 
@@ -259,22 +244,7 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
 
     fun loadArtistDetails(artistName: String, fallbackImageUrl: String? = null) {
         viewModelScope.launch {
-            val cachedSongs = _uiState.value.songs
-                .filter { it.artist.contains(artistName, ignoreCase = true) }
-                .distinctBy { it.name }
-
-            if (cachedSongs.isNotEmpty()) {
-                val cachedArtist = Artist(
-                    name = artistName,
-                    imageUrl = fallbackImageUrl ?: cachedSongs.firstOrNull()?.metaPoster,
-                    popularSongs = cachedSongs
-                )
-                _uiState.update { it.copy(selectedArtist = cachedArtist, isArtistLoading = false) }
-                if (cachedSongs.size >= 5) return@launch
-            } else {
-                _uiState.update { it.copy(isArtistLoading = true) }
-            }
-
+            _uiState.update { it.copy(isArtistLoading = true) }
             try {
                 val relatedSongs = musicApiService.search(artistName).toSongList()
                     .filter { !it.isDir }
@@ -298,28 +268,12 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
 
     fun loadAlbumDetails(albumName: String, artistName: String, fallbackImageUrl: String? = null) {
         viewModelScope.launch {
-            val cachedSongs = _uiState.value.songs
-                .filter { it.albumName == albumName && (it.artist.contains(artistName, ignoreCase = true) || artistName == "Unknown Artist") }
-                .distinctBy { it.name }
-
-            if (cachedSongs.isNotEmpty()) {
-                val cachedAlbum = Album(
-                    name = albumName,
-                    artist = artistName,
-                    songs = cachedSongs,
-                    imageUrl = fallbackImageUrl ?: cachedSongs.firstOrNull()?.metaPoster
-                )
-                _uiState.update { it.copy(selectedAlbum = cachedAlbum, isAlbumLoading = false) }
-                return@launch
-            } else {
-                _uiState.update { it.copy(isAlbumLoading = true) }
-            }
-
+            _uiState.update { it.copy(isAlbumLoading = true) }
             try {
                 val searchResult = musicApiService.search(albumName).toSongList()
                     .filter { !it.isDir }
                     .map { cleanSongInfo(it) }
-                    .filter { it.albumName == albumName && (it.artist.contains(artistName, ignoreCase = true) || artistName == "Unknown Artist") }
+                    .filter { it.albumName == albumName }
                     .distinctBy { it.name }
                 
                 val albumInfo = Album(
