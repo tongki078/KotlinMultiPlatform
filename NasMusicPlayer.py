@@ -79,7 +79,6 @@ def scan_all_songs_to_db():
     print("--- 🚀 Global Indexing Started ---")
     start_time = time.time()
     all_dirs = []
-    # 모든 루트 경로 합치기
     search_roots = [ROOT_DIR] + list(GENRE_ROOTS.values())
     for r_path in search_roots:
         for root, dirs, files in os.walk(r_path):
@@ -118,14 +117,10 @@ def scan_music_library():
         try: return [d.name for d in os.scandir(path) if d.is_dir()]
         except: return []
 
-    # 1. 차트/모음 (폴더 이름만 수집)
     charts = [{"name": d, "path": f"차트/{d}"} for d in sorted(get_subdirs(CHART_ROOT))]
     colls = [{"name": d, "path": f"모음/{d}"} for d in sorted(get_subdirs(COLLECTION_ROOT))]
-
-    # 2. 장르 (사전 정의된 경로)
     genres = [{"name": g, "path": f"장르/{g}"} for g in GENRE_ROOTS.keys()]
 
-    # 3. 가수 (초성 폴더 안의 가수 이름만)
     artist_themes = []
     if os.path.exists(ARTIST_ROOT):
         all_singers = []
@@ -142,31 +137,22 @@ def scan_music_library():
         "last_updated": time.time()
     })
 
-    # 테마 수집이 끝났으므로 전체 인덱싱 시작
     scan_all_songs_to_db()
 
 @app.route('/api/theme-details/<path:theme_path>', methods=['GET'])
 def get_theme_details(theme_path):
-    """DB에서 해당 경로의 곡들을 즉시 찾아 그룹화하여 반환 (매우 빠름)"""
     decoded_path = urllib.parse.unquote(theme_path)
-
-    # 장르의 경우 '장르/외국' 형태이므로 실제 경로는 '외국' 임
     search_path = decoded_path.replace("장르/", "")
-
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        # 해당 경로로 시작하는 모든 곡 가져오기
         cursor.execute("SELECT * FROM global_songs WHERE parent_path LIKE ? ORDER BY parent_path, name", (f"{search_path}%",))
         rows = cursor.fetchall()
-
-        # 카테고리별(부모 폴더별) 그룹화
         groups = {}
         for row in rows:
             cat = row['parent_path'].split('/')[-1]
             if cat not in groups: groups[cat] = []
             groups[cat].append(dict(row))
-
         result = [{"category_name": k, "songs": v} for k, v in groups.items()]
         return jsonify(result)
 
@@ -179,32 +165,47 @@ def get_themes():
 
 @app.route('/api/top100', methods=['GET'])
 def get_top100():
+    """DB에 데이터가 없더라도 주간 차트 폴더를 직접 스캔하여 즉시 반환"""
     try:
+        if not os.path.exists(WEEKLY_CHART_PATH): return jsonify([])
         subdirs = sorted([d for d in os.listdir(WEEKLY_CHART_PATH) if os.path.isdir(os.path.join(WEEKLY_CHART_PATH, d))])
         if not subdirs: return jsonify([])
-        latest_folder = subdirs[-1]
-        rel_path = os.path.relpath(os.path.join(WEEKLY_CHART_PATH, latest_folder), MUSIC_BASE)
 
+        latest_folder = subdirs[-1]
+        latest_dir = os.path.join(WEEKLY_CHART_PATH, latest_folder)
+        rel_path = os.path.relpath(latest_dir, MUSIC_BASE)
+
+        # 1. 먼저 DB에서 조회 시도
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM global_songs WHERE parent_path = ? ORDER BY name", (rel_path,))
-            return jsonify([dict(row) for row in cursor.fetchall()])
-    except: return jsonify([])
+            rows = cursor.fetchall()
+            if rows:
+                return jsonify([dict(row) for row in rows])
+
+        # 2. DB가 비어있으면 (인덱싱 중이면) 직접 폴더 스캔
+        print(f"[*] DB is empty/indexing. Direct scanning weekly chart: {latest_folder}")
+        songs = []
+        with os.scandir(latest_dir) as it:
+            for entry in it:
+                if entry.is_file() and entry.name.lower().endswith(('.mp3', '.m4a', '.flac', '.dsf')):
+                    res = get_song_info(entry.name, latest_dir)
+                    songs.append({
+                        "name": res[0], "artist": res[1], "album": res[2],
+                        "stream_url": res[3], "parent_path": res[4], "meta_poster": None
+                    })
+        songs.sort(key=lambda x: x["name"])
+        return jsonify(songs)
+    except Exception as e:
+        print(f"Top100 Error: {e}")
+        return jsonify([])
 
 @app.route('/stream/<path:file_path>', methods=['GET'])
 def stream_file(file_path):
     return send_from_directory(MUSIC_BASE, urllib.parse.unquote(file_path))
 
-# ... 메타데이터 API 생략 (기존과 동일) ...
-
 if __name__ == '__main__':
     init_db()
-    # 서버 실행 시 캐시 로드
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.cursor()
-        # 간단한 로드 로직 (필요시 보강)
-        pass
-
     Thread(target=scan_music_library).start()
     app.run(host='0.0.0.0', port=4444, debug=False)
