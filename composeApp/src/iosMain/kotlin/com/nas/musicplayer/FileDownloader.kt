@@ -22,14 +22,12 @@ class IosFileDownloader : FileDownloader {
         val fileManager = NSFileManager.defaultManager
         val url = NSURL.fileURLWithPath(filePath)
         
-        // 노래 파일 삭제
         val musicDeleted = if (fileManager.fileExistsAtPath(filePath)) {
             fileManager.removeItemAtURL(url, null)
         } else {
             false
         }
 
-        // 연관된 이미지 파일 삭제 시도
         val baseName = filePath.substringBeforeLast(".")
         val imagePath = "$baseName.jpg"
         if (fileManager.fileExistsAtPath(imagePath)) {
@@ -40,7 +38,13 @@ class IosFileDownloader : FileDownloader {
     }
 
     private fun downloadInternal(url: String, fileName: String, onResult: (Boolean, String?) -> Unit) {
-        val nsUrl = NSURL.URLWithString(url) ?: run {
+        // [중요] 원격 URL에 괄호나 공백이 있을 경우를 대비해 인코딩 처리
+        val decoded = (url as NSString).stringByRemovingPercentEncoding() ?: url
+        val allowedChars = NSCharacterSet.URLQueryAllowedCharacterSet().mutableCopy() as NSMutableCharacterSet
+        allowedChars.addCharactersInString(":#") 
+        val encodedUrl = (decoded as NSString).stringByAddingPercentEncodingWithAllowedCharacters(allowedChars) ?: decoded
+
+        val nsUrl = NSURL.URLWithString(encodedUrl) ?: run {
             onResult(false, "유효하지 않은 URL입니다.")
             return
         }
@@ -87,7 +91,11 @@ class IosFileDownloader : FileDownloader {
     }
 
     private fun downloadImage(imageUrl: String, imageFileName: String) {
-        val nsUrl = NSURL.URLWithString(imageUrl) ?: return
+        // 이미지 URL도 동일하게 인코딩 처리
+        val decoded = (imageUrl as NSString).stringByRemovingPercentEncoding() ?: imageUrl
+        val encodedUrl = (decoded as NSString).stringByAddingPercentEncodingWithAllowedCharacters(NSCharacterSet.URLQueryAllowedCharacterSet()) ?: decoded
+        
+        val nsUrl = NSURL.URLWithString(encodedUrl) ?: return
         val task = NSURLSession.sharedSession.downloadTaskWithURL(nsUrl) { location, _, _ ->
             if (location != null) {
                 val fileManager = NSFileManager.defaultManager

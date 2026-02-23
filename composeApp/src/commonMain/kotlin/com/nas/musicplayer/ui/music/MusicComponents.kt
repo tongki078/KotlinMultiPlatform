@@ -12,7 +12,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -33,7 +33,7 @@ fun SongListItem(
     onItemClick: () -> Unit, 
     onMoreClick: () -> Unit,
     isDownloading: Boolean = false,
-    isDownloaded: Boolean = false // 다운로드 완료 상태 추가
+    isDownloaded: Boolean = false
 ) {
     val infiniteTransition = rememberInfiniteTransition()
     val rotation by infiniteTransition.animateFloat(
@@ -56,30 +56,41 @@ fun SongListItem(
                 modifier = Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)),
                 contentScale = ContentScale.Crop
             )
+            
             Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
+            
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) { // 우측 간격 추가
                 Text(song.name ?: "제목 없음", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold, maxLines = 1)
                 Text(song.artist, style = MaterialTheme.typography.bodyMedium, color = Color.Gray, maxLines = 1)
             }
             
-            when {
-                isDownloading -> {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End
+            ) {
+                if (isDownloading) {
                     Icon(
                         Icons.Default.Sync, 
                         null, 
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp).rotate(rotation)
+                        modifier = Modifier.size(20.dp).rotate(rotation)
                     )
+                    Spacer(modifier = Modifier.width(4.dp)) // 간격 확보
+                } else if (isDownloaded) {
+                    Icon(
+                        Icons.Default.DownloadDone, 
+                        null, 
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp)) // 간격 확보
                 }
-                isDownloaded -> {
-                    IconButton(onClick = onMoreClick) {
-                        Icon(Icons.Default.CheckCircle, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
-                    }
-                }
-                else -> {
-                    IconButton(onClick = onMoreClick) {
-                        Icon(Icons.Default.MoreVert, null, tint = Color.Gray)
-                    }
+                
+                IconButton(
+                    onClick = onMoreClick,
+                    modifier = Modifier.size(40.dp) // 버튼 영역 표준화
+                ) {
+                    Icon(Icons.Default.MoreVert, null, tint = Color.Gray)
                 }
             }
         }
@@ -95,7 +106,7 @@ fun MoreOptionsSheet(
     onNavigateToAlbum: () -> Unit,
     onDownloadClick: () -> Unit,
     onDeleteClick: (() -> Unit)? = null,
-    isDownloaded: Boolean = false // 다운로드 완료 여부 전달
+    isDownloaded: Boolean = false
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary
     Column(modifier = Modifier.padding(bottom = 32.dp)) {
@@ -114,7 +125,6 @@ fun MoreOptionsSheet(
         )
         HorizontalDivider(color = Color.LightGray.copy(alpha = 0.3f))
         
-        // 이미 다운로드된 곡이라면 '삭제' 메뉴를, 아니면 '다운로드' 메뉴를 표시
         if (isDownloaded || onDeleteClick != null) {
             ListItem(
                 headlineContent = { Text("보관함에서 삭제", color = MaterialTheme.colorScheme.error) }, 

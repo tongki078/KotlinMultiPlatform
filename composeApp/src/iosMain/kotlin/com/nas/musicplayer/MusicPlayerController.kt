@@ -61,36 +61,72 @@ actual class MusicPlayerController {
 
     actual fun playSong(song: Song, playlist: List<Song>) {
         val streamUrl = song.streamUrl ?: return
-        println("iOS PlayRequest - Name: ${song.name}, RawURL: $streamUrl")
+        println("iOS PlayRequest - Song: ${song.name}, Artist: ${song.artist}")
         
-        // 1. 프로토콜 처리 (특정 도메인 대응)
-        var urlString = if (streamUrl.contains("music.yommi.mywire.org")) {
-            streamUrl.replace("https://", "http://")
+        val fileManager = NSFileManager.defaultManager
+        val url: NSURL? = if (streamUrl.startsWith("/") || streamUrl.contains("/Documents/")) {
+            // [개선] 가장 강력한 로컬 파일 탐색 로직
+            val documentsPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, true).first() as String
+            
+            // 1. 비교용 키 생성 함수: 오직 글자와 숫자만 남김 (공백, 괄호 등 제거)
+            fun makeSimpleKey(text: String): String = text.lowercase()
+                .filter { it.isLetterOrDigit() }
+
+            val targetTitleKey = makeSimpleKey(song.name ?: "")
+            
+            // 2. Documents 폴더 전수 조사
+            val allFiles = fileManager.contentsOfDirectoryAtPath(documentsPath, null) as? List<String>
+            
+            // 3. 파일 목록 중 음악 파일이면서 제목 키와 매칭되는 것 찾기
+            val matchedFileName = allFiles?.filter { f ->
+                val lower = f.lowercase()
+                lower.endsWith(".mp3") || lower.endsWith(".m4a") || lower.endsWith(".wav")
+            }?.find { f ->
+                val fileTitleKey = makeSimpleKey(f.substringBeforeLast("."))
+                // 파일명이 제목을 포함하거나, 제목이 파일명을 포함하는지 확인
+                fileTitleKey.contains(targetTitleKey) || targetTitleKey.contains(fileTitleKey)
+            }
+
+            val finalPath = if (matchedFileName != null) {
+                "$documentsPath/$matchedFileName"
+            } else {
+                // 매칭 실패 시 원본 streamUrl 시도 (하지만 샌드박스 경로 변경 이슈 대응을 위해 현재 docs 경로와 결합)
+                val fileName = (streamUrl as NSString).lastPathComponent
+                val fallbackPath = "$documentsPath/$fileName"
+                if (fileManager.fileExistsAtPath(fallbackPath)) fallbackPath else null
+            }
+
+            if (finalPath == null) {
+                println("iOS Player Error: Local file NOT found for ${song.name}")
+                return
+            }
+            
+            println("iOS Player: Final matched path -> $finalPath")
+            NSURL.fileURLWithPath(finalPath)
         } else {
-            streamUrl
+            // 2. 원격 URL 처리
+            var urlString = if (streamUrl.contains("music.yommi.mywire.org")) {
+                streamUrl.replace("https://", "http://")
+            } else {
+                streamUrl
+            }
+            val decoded = (urlString as NSString).stringByRemovingPercentEncoding() ?: urlString
+            val allowedChars = NSCharacterSet.URLQueryAllowedCharacterSet().mutableCopy() as NSMutableCharacterSet
+            allowedChars.addCharactersInString(":#") 
+            val encodedUrl = (decoded as NSString).stringByAddingPercentEncodingWithAllowedCharacters(allowedChars) ?: decoded
+            NSURL.URLWithString(encodedUrl)
         }
 
-        // 2. 안전한 URL 인코딩 (중복 인코딩 방지)
-        val decoded = (urlString as NSString).stringByRemovingPercentEncoding() ?: urlString
-        val allowedChars = NSCharacterSet.URLQueryAllowedCharacterSet().mutableCopy() as NSMutableCharacterSet
-        allowedChars.addCharactersInString(":#") 
-        
-        val encodedUrl = (decoded as NSString).stringByAddingPercentEncodingWithAllowedCharacters(allowedChars) ?: decoded
-
-        val url = NSURL.URLWithString(encodedUrl)
-        if (url == null) {
-            println("iOS Player Error: NSURL conversion failed for $encodedUrl")
-            return
-        }
+        if (url == null) return
 
         setupAudioSession()
-        
         removeTimeObserver()
         removeEndOfTimeObserver()
         player?.pause()
         
-        val playerItem = AVPlayerItem.playerItemWithURL(url)
-        playerItem.preferredForwardBufferDuration = 5.0
+        // AVURLAsset을 사용하여 더 안정적으로 로드
+        val asset = AVURLAsset.URLAssetWithURL(url, null)
+        val playerItem = AVPlayerItem.playerItemWithAsset(asset)
         
         playerItemEndOfTimeObserver = NSNotificationCenter.defaultCenter.addObserverForName(
             name = AVPlayerItemDidPlayToEndTimeNotification,
@@ -106,7 +142,6 @@ actual class MusicPlayerController {
         }
         
         player?.automaticallyWaitsToMinimizeStalling = true
-        // 타입 에러 수정: Double 대신 Float 그대로 대입
         player?.volume = _volume.value
 
         _currentSong.value = song
@@ -124,25 +159,21 @@ actual class MusicPlayerController {
 
     private fun setupRemoteCommandCenter() {
         val commandCenter = MPRemoteCommandCenter.sharedCommandCenter()
-        
         commandCenter.playCommand.setEnabled(true)
         commandCenter.playCommand.addTargetWithHandler { _ ->
             if (!_isPlaying.value) togglePlayPause()
             MPRemoteCommandHandlerStatusSuccess
         }
-        
         commandCenter.pauseCommand.setEnabled(true)
         commandCenter.pauseCommand.addTargetWithHandler { _ ->
             if (_isPlaying.value) togglePlayPause()
             MPRemoteCommandHandlerStatusSuccess
         }
-        
         commandCenter.nextTrackCommand.setEnabled(true)
         commandCenter.nextTrackCommand.addTargetWithHandler { _ ->
             playNext()
             MPRemoteCommandHandlerStatusSuccess
         }
-        
         commandCenter.previousTrackCommand.setEnabled(true)
         commandCenter.previousTrackCommand.addTargetWithHandler { _ ->
             playPrevious()
@@ -153,17 +184,12 @@ actual class MusicPlayerController {
     private fun updateNowPlayingInfo(song: Song) {
         val infoCenter = MPNowPlayingInfoCenter.defaultCenter()
         val info = mutableMapOf<Any?, Any?>()
-        
         info[MPMediaItemPropertyTitle] = song.name ?: "Unknown"
         info[MPMediaItemPropertyArtist] = song.artist
         info[MPMediaItemPropertyAlbumTitle] = song.albumName
         info[MPNowPlayingInfoPropertyPlaybackRate] = if (_isPlaying.value) 1.0 else 0.0
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = _currentPosition.value / 1000.0
-        
-        cachedArtwork?.let {
-            info[MPMediaItemPropertyArtwork] = it
-        }
-
+        cachedArtwork?.let { info[MPMediaItemPropertyArtwork] = it }
         infoCenter.setNowPlayingInfo(info)
 
         val imageUrlString = song.metaPoster ?: song.streamUrl
@@ -203,11 +229,7 @@ actual class MusicPlayerController {
     }
 
     actual fun togglePlayPause() {
-        if (_isPlaying.value) {
-            player?.pause()
-        } else {
-            player?.play()
-        }
+        if (_isPlaying.value) player?.pause() else player?.play()
         _isPlaying.value = !_isPlaying.value
         _currentSong.value?.let { updateNowPlayingInfo(it) }
     }
@@ -217,15 +239,11 @@ actual class MusicPlayerController {
         timeObserver = player?.addPeriodicTimeObserverForInterval(interval, null) { time ->
             val seconds = CMTimeGetSeconds(time)
             _currentPosition.value = (seconds * 1000).toLong()
-            
             val durationTime = player?.currentItem?.duration
             if (durationTime != null) {
                 val durationSeconds = CMTimeGetSeconds(durationTime)
-                if (!durationSeconds.isNaN()) {
-                    _duration.value = (durationSeconds * 1000).toLong()
-                }
+                if (!durationSeconds.isNaN()) _duration.value = (durationSeconds * 1000).toLong()
             }
-            
             val infoCenter = MPNowPlayingInfoCenter.defaultCenter()
             val currentInfo = infoCenter.nowPlayingInfo()?.toMutableMap() ?: mutableMapOf()
             currentInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = _currentPosition.value / 1000.0
@@ -234,34 +252,22 @@ actual class MusicPlayerController {
     }
 
     private fun removeTimeObserver() {
-        timeObserver?.let {
-            player?.removeTimeObserver(it)
-            timeObserver = null
-        }
+        timeObserver?.let { player?.removeTimeObserver(it); timeObserver = null }
     }
 
     private fun removeEndOfTimeObserver() {
-        playerItemEndOfTimeObserver?.let {
-            NSNotificationCenter.defaultCenter.removeObserver(it)
-            playerItemEndOfTimeObserver = null
-        }
+        playerItemEndOfTimeObserver?.let { NSNotificationCenter.defaultCenter.removeObserver(it); playerItemEndOfTimeObserver = null }
     }
 
     actual fun playNext() {
         val nextIndex = _currentIndex.value + 1
-        if (nextIndex < _currentPlaylist.value.size) {
-            playSong(_currentPlaylist.value[nextIndex], _currentPlaylist.value)
-        } else {
-            _isPlaying.value = false
-            _currentSong.value?.let { updateNowPlayingInfo(it) }
-        }
+        if (nextIndex < _currentPlaylist.value.size) playSong(_currentPlaylist.value[nextIndex], _currentPlaylist.value)
+        else { _isPlaying.value = false; _currentSong.value?.let { updateNowPlayingInfo(it) } }
     }
 
     actual fun playPrevious() {
         val prevIndex = _currentIndex.value - 1
-        if (prevIndex >= 0) {
-            playSong(_currentPlaylist.value[prevIndex], _currentPlaylist.value)
-        }
+        if (prevIndex >= 0) playSong(_currentPlaylist.value[prevIndex], _currentPlaylist.value)
     }
 
     actual fun seekTo(position: Long) {
@@ -272,9 +278,7 @@ actual class MusicPlayerController {
     }
 
     actual fun skipToIndex(index: Int) {
-        if (index in _currentPlaylist.value.indices) {
-            playSong(_currentPlaylist.value[index], _currentPlaylist.value)
-        }
+        if (index in _currentPlaylist.value.indices) playSong(_currentPlaylist.value[index], _currentPlaylist.value)
     }
 
     actual fun setVolume(volume: Float) {
