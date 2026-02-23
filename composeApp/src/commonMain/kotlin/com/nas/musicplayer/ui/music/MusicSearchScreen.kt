@@ -167,24 +167,24 @@ fun MusicSearchScreen(
 
         Box(modifier = Modifier.weight(1f)) {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
-                // 상단 테마 가로 리스트
+                // 1. 추천 차트
                 if (uiState.themes.isNotEmpty() && !isSearchFocused && uiState.searchQuery.isEmpty()) {
                     item {
-                        Column(modifier = Modifier.padding(vertical = 12.dp)) {
-                            Text(
-                                text = "추천 테마",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
-                            )
-                            LazyRow(
-                                contentPadding = PaddingValues(horizontal = 16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                items(uiState.themes) { theme ->
-                                    ThemeItem(theme = theme, onClick = { onNavigateToTheme(theme) })
-                                }
-                            }
-                        }
+                        ThemeSection(title = "추천 차트", themes = uiState.themes, onNavigateToTheme = onNavigateToTheme)
+                    }
+                }
+
+                // 2. 추천 모음
+                if (uiState.collectionThemes.isNotEmpty() && !isSearchFocused && uiState.searchQuery.isEmpty()) {
+                    item {
+                        ThemeSection(title = "추천 모음", themes = uiState.collectionThemes, onNavigateToTheme = onNavigateToTheme)
+                    }
+                }
+
+                // 3. 가수별 추천 (랜덤)
+                if (uiState.artistThemes.isNotEmpty() && !isSearchFocused && uiState.searchQuery.isEmpty()) {
+                    item {
+                        ThemeSection(title = "가수별 추천", themes = uiState.artistThemes, onNavigateToTheme = onNavigateToTheme)
                     }
                 }
 
@@ -289,6 +289,25 @@ fun MusicSearchScreen(
                 } else null,
                 isDownloaded = isDownloaded
             )
+        }
+    }
+}
+
+@Composable
+fun ThemeSection(title: String, themes: List<Theme>, onNavigateToTheme: (Theme) -> Unit) {
+    Column(modifier = Modifier.padding(vertical = 12.dp)) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+        )
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            items(themes) { theme ->
+                ThemeItem(theme = theme, onClick = { onNavigateToTheme(theme) })
+            }
         }
     }
 }

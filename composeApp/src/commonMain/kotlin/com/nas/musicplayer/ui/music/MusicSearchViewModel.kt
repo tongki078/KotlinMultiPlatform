@@ -24,6 +24,13 @@ import kotlinx.serialization.Serializable
 data class Theme(val name: String, val path: String)
 
 @Serializable
+data class ThemeResponse(
+    val charts: List<Theme>,
+    val collections: List<Theme>,
+    val artists: List<Theme> = emptyList()
+)
+
+@Serializable
 data class ThemeDetail(
     val category_name: String,
     val songs: List<Song>
@@ -32,6 +39,8 @@ data class ThemeDetail(
 data class MusicSearchUiState(
     val songs: List<Song> = emptyList(),
     val themes: List<Theme> = emptyList(),
+    val collectionThemes: List<Theme> = emptyList(),
+    val artistThemes: List<Theme> = emptyList(),
     val themeDetails: List<ThemeDetail> = emptyList(),
     val isLoading: Boolean = false,
     val searchQuery: String = "",
@@ -103,8 +112,12 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
     fun loadThemes() {
         viewModelScope.launch {
             try {
-                val themes = httpClient.get("$pythonBaseUrl/api/themes").body<List<Theme>>()
-                _uiState.update { it.copy(themes = themes) }
+                val response = httpClient.get("$pythonBaseUrl/api/themes").body<ThemeResponse>()
+                _uiState.update { it.copy(
+                    themes = response.charts,
+                    collectionThemes = response.collections,
+                    artistThemes = response.artists
+                ) }
             } catch (e: Exception) {
                 println("Failed to load themes: ${e.message}")
             }
@@ -113,7 +126,6 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
 
     fun loadThemeDetails(theme: Theme) {
         viewModelScope.launch {
-            // 상세 페이지 진입 전 기존 데이터 초기화 및 로딩 시작
             _uiState.update { it.copy(isLoading = true, themeDetails = emptyList()) }
             try {
                 val details = httpClient.get("$pythonBaseUrl/api/theme-details/${theme.path}").body<List<ThemeDetail>>()
