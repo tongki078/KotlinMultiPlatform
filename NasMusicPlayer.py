@@ -6,7 +6,7 @@ from flask_cors import CORS
 import urllib.parse
 import time
 import random
-from threading import Thread, Lock
+from threading import Thread
 import xml.etree.ElementTree as ET
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 app = Flask(__name__)
 CORS(app)
 
-# 경로 설정
+# --- 1. 경로 및 기본 설정 ---
 MUSIC_BASE = "/volume2/video/GDS3/GDRIVE/MUSIC"
 ROOT_DIR = os.path.join(MUSIC_BASE, "국내")
 CHART_ROOT = os.path.join(ROOT_DIR, "차트")
@@ -33,126 +33,12 @@ GENRE_ROOTS = {
 BASE_URL = "http://192.168.0.2:4444"
 DB_PATH = "music_cache_v2.db"
 
-# --- 모니터링 상태 관리 ---
-status_lock = Lock()
-update_status = {
-    "is_running": False,
-    "is_complete": False,
-    "current_task": "대기 중...",
-    "progress_text": "0/0",
-    "progress_percent": 0,
-    "stats_text": "성공: 0 | 실패: 0",
-    "complete_message": "",
-    "logs": ["모니터가 시작되었습니다."]
-}
+# 상태 전역 변수
+update_status = {"is_running": False, "total": 0, "current": 0, "success": 0, "fail": 0, "last_log": "대기 중..."}
+cache = {"themes_charts": [], "themes_collections": [], "themes_artists": [], "themes_genres": [], "last_updated": 0}
 
-MONITOR_PAGE_HTML = '''
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>실시간 인덱싱 모니터</title>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif; background-color: #f0f2f5; color: #333; margin: 0; padding: 20px; }
-        .container { max-width: 1000px; margin: auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); padding: 20px; }
-        h1 { font-size: 24px; color: #1c1e21; border-bottom: 1px solid #ddd; padding-bottom: 10px; margin-top: 0; }
-        .button-group { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
-        .button { padding: 10px 15px; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
-        .btn-primary { background-color: #1877f2; color: white; }
-        .status-box { background-color: #f7f7f7; padding: 15px; border-radius: 6px; margin-bottom: 20px; }
-        .progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        #task-name { font-size: 16px; font-weight: bold; }
-        #stats { font-size: 14px; color: #606770; }
-        .progress-bar-container { width: 100%; background-color: #e0e0e0; border-radius: 4px; overflow: hidden; height: 20px; }
-        #progress-bar { width: 0%; height: 100%; background-color: #4caf50; transition: width 0.3s ease; text-align: center;}
-        #progress-text { line-height: 20px; color: black; font-weight: 500; font-size: 12px; }
-        .log-box { background-color: #1c1e21; color: #e0e0e0; font-family: 'SF Mono', 'Menlo', 'Monaco', monospace; font-size: 13px; height: 400px; overflow-y: auto; padding: 15px; border-radius: 6px; white-space: pre-wrap; word-wrap: break-word; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🎵 음악 라이브러리 실시간 모니터</h1>
-        <div class="button-group">
-            <button class="button btn-primary" onclick="startScan()">🔄 전체 라이브러리 재스캔</button>
-        </div>
-        <div class="status-box">
-            <div class="progress-header">
-                <span id="task-name">대기 중...</span>
-                <span id="stats">성공: 0 | 실패: 0</span>
-            </div>
-            <div class="progress-bar-container">
-                 <div id="progress-bar"><span id="progress-text">0 / 0 (0%)</span></div>
-            </div>
-        </div>
-        <div id="log-box" class="log-box">서버 로그가 여기에 표시됩니다...</div>
-    </div>
 
-    <script>
-        const taskNameEl = document.getElementById('task-name');
-        const statsEl = document.getElementById('stats');
-        const progressBarEl = document.getElementById('progress-bar');
-        const progressTextEl = document.getElementById('progress-text');
-        const logBoxEl = document.getElementById('log-box');
-
-        function startScan() {
-            if (confirm('전체 라이브러리 재스캔을 시작하시겠습니까? 시간이 오래 걸릴 수 있습니다.')) {
-                fetch('/api/indexing/start', { method: 'POST' })
-                    .then(response => response.json())
-                    .then(data => {
-                        console.log(data.message);
-                        updateMonitor();
-                    });
-            }
-        }
-
-        function updateMonitor() {
-            fetch('/api/indexing/status')
-                .then(response => response.json())
-                .then(data => {
-                    taskNameEl.textContent = data.is_running ? data.current_task : (data.is_complete ? "✅ " + data.complete_message : "대기 중...");
-                    statsEl.textContent = data.stats_text;
-
-                    const percent = data.progress_percent.toFixed(1);
-                    progressBarEl.style.width = percent + '%';
-                    progressTextEl.textContent = `${data.progress_text} (${percent}%)`;
-
-                    if (data.is_running) {
-                        progressBarEl.style.backgroundColor = '#4caf50';
-                    } else if (data.is_complete) {
-                        progressBarEl.style.backgroundColor = '#1877f2';
-                    } else {
-                        progressBarEl.style.backgroundColor = '#e0e0e0';
-                    }
-
-                    logBoxEl.innerHTML = data.logs.join('<br>');
-                })
-                .catch(error => {
-                    console.error('Error fetching status:', error);
-                    if (!logBoxEl.innerHTML.startsWith('모니터링 서버에 연결할 수 없습니다.')) {
-                        logBoxEl.innerHTML = '모니터링 서버에 연결할 수 없습니다.<br>' + logBoxEl.innerHTML;
-                    }
-                });
-        }
-
-        setInterval(updateMonitor, 1500);
-        window.onload = updateMonitor;
-    </script>
-</body>
-</html>
-'''
-# -------------------------
-
-def add_log(message, is_error=False):
-    with status_lock:
-        timestamp = time.strftime('%H:%M:%S')
-        symbol = "⚠️" if is_error else "✅"
-        log_entry = f"{timestamp} {symbol} {message}"
-        update_status["logs"].insert(0, log_entry)
-        if len(update_status["logs"]) > 200:
-            update_status["logs"].pop()
-    print(message, flush=True)
-
+# --- 2. DB 초기화 ---
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
@@ -171,6 +57,28 @@ def init_db():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_song_parent ON global_songs(parent_path)')
         conn.commit()
 
+def load_themes_from_db():
+    """서버 시작 시 DB에서 테마 목록 로드 (누락되었던 부분 복구)"""
+    global cache
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name, path FROM themes WHERE type='charts'")
+            cache["themes_charts"] = [{"name": r[0], "path": r[1]} for r in cursor.fetchall()]
+
+            cursor.execute("SELECT name, path FROM themes WHERE type='collections'")
+            cache["themes_collections"] = [{"name": r[0], "path": r[1]} for r in cursor.fetchall()]
+
+            cursor.execute("SELECT name, path FROM themes WHERE type='artists'")
+            cache["themes_artists"] = [{"name": r[0], "path": r[1]} for r in cursor.fetchall()]
+
+            cursor.execute("SELECT name, path FROM themes WHERE type='genres'")
+            cache["themes_genres"] = [{"name": r[0], "path": r[1]} for r in cursor.fetchall()]
+    except Exception as e:
+        print(f"Failed to load themes from DB: {e}")
+
+
+# --- 3. 공통 유틸 ---
 def get_song_info(file_name, directory):
     clean_name = os.path.splitext(file_name)[0]
     artist, title = "Unknown Artist", clean_name
@@ -181,6 +89,8 @@ def get_song_info(file_name, directory):
     rel_path = os.path.relpath(directory, MUSIC_BASE)
     return (title, artist, os.path.basename(directory), f"{BASE_URL}/stream/{urllib.parse.quote(rel_path)}/{urllib.parse.quote(file_name)}", rel_path)
 
+
+# --- 4. 인덱싱 로직 (폴더 및 파일 스캔) ---
 def scan_folder_parallel(path):
     songs = []
     try:
@@ -191,49 +101,43 @@ def scan_folder_parallel(path):
     except: pass
     return songs
 
-def find_artist_themes_recursively(root_path):
-    artist_themes = []
-    if not os.path.exists(root_path):
-        return []
+def scan_all_songs_to_db():
+    print("--- 🚀 Global Indexing Started ---")
+    start_time = time.time()
+    all_dirs = []
+    search_roots = [ROOT_DIR] + list(GENRE_ROOTS.values())
+    for r_path in search_roots:
+        for root, dirs, files in os.walk(r_path):
+            all_dirs.append(root)
 
-    dir_count = 0
-    try:
-        for dirpath, dirnames, filenames in os.walk(root_path):
-            dir_count += 1
-            if dir_count % 500 == 0:
-                add_log(f"[Theme] 아티스트 폴더 스캔 중... {dir_count}개 확인")
-                with status_lock:
-                    update_status["current_task"] = f"아티스트 테마 찾는 중... ({dir_count}개 폴더 확인)"
+    total_dirs = len(all_dirs)
+    print(f"[*] Total directories to scan: {total_dirs}")
 
-            has_music = any(fname.lower().endswith(('.mp3', '.m4a', '.flac', '.dsf')) for fname in filenames)
+    all_songs = []
+    processed_count = 0
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        futures = {executor.submit(scan_folder_parallel, d): d for d in all_dirs}
+        for future in as_completed(futures):
+            res = future.result()
+            all_songs.extend(res)
+            processed_count += 1
+            if processed_count % 1000 == 0 or processed_count == total_dirs:
+                print(f"[Indexing] {processed_count}/{total_dirs} directories scanned ({len(all_songs)} songs)...")
 
-            if has_music:
-                artist_name = os.path.basename(dirpath)
-                relative_path = os.path.relpath(dirpath, ARTIST_ROOT)
-                artist_themes.append({
-                    "name": artist_name,
-                    "path": f"가수/{relative_path.replace(os.sep, '/')}"
-                })
-                dirnames.clear()
-    except OSError as e:
-        add_log(f"아티스트 폴더 스캔 중 오류 발생: {root_path}: {e}", is_error=True)
+    print("[*] Updating Database...")
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("CREATE TEMP TABLE old_meta AS SELECT artist, album, meta_poster FROM global_songs WHERE meta_poster IS NOT NULL")
+        cursor.execute("DELETE FROM global_songs")
+        cursor.executemany("INSERT INTO global_songs (name, artist, album, stream_url, parent_path) VALUES (?, ?, ?, ?, ?)", all_songs)
+        cursor.execute("UPDATE global_songs SET meta_poster = (SELECT meta_poster FROM old_meta WHERE old_meta.artist = global_songs.artist AND old_meta.album = global_songs.album)")
+        conn.commit()
+    print(f"--- ✅ Indexing Finished! ({len(all_songs)} songs, {time.time() - start_time:.2f}s) ---")
 
-    return artist_themes
-
-def scan_and_index_library():
-    with status_lock:
-        if update_status["is_running"]:
-            add_log("이미 스캔 작업이 진행 중입니다.", is_error=True)
-            return
-        update_status.update({
-            "is_running": True, "is_complete": False, "logs": [],
-            "current_task": "스캔 준비 중...", "progress_text": "0/0",
-            "progress_percent": 0, "stats_text": "성공: 0 | 실패: 0"
-        })
-    add_log("--- 🔄 전체 라이브러리 스캔을 시작합니다 ---")
-
-    # 1단계: 테마 검색
-    add_log("--- ⚡ 1단계: 테마 목록 생성 시작 ---")
+def scan_music_library():
+    """테마 구조만 초고속 스캔 후, 전체 인덱싱 실행"""
+    global cache
+    print("--- ⚡ Quick Theme Discovery Started ---")
 
     def get_subdirs(path):
         try: return [d.name for d in os.scandir(path) if d.is_dir()]
@@ -242,129 +146,144 @@ def scan_and_index_library():
     charts = [{"name": d, "path": f"차트/{d}"} for d in sorted(get_subdirs(CHART_ROOT))]
     colls = [{"name": d, "path": f"모음/{d}"} for d in sorted(get_subdirs(COLLECTION_ROOT))]
     genres = [{"name": g, "path": f"장르/{g}"} for g in GENRE_ROOTS.keys()]
-    add_log("[Theme] '차트', '모음', '장르' 테마 스캔 완료.")
 
-    all_artist_themes = find_artist_themes_recursively(ARTIST_ROOT)
+    artist_themes = []
+    if os.path.exists(ARTIST_ROOT):
+        all_singers = []
+        for ini in os.scandir(ARTIST_ROOT):
+            if ini.is_dir():
+                for s in os.scandir(ini.path):
+                    if s.is_dir(): all_singers.append({"name": s.name, "path": f"가수/{ini.name}/{s.name}"})
+        if all_singers:
+            artist_themes = random.sample(all_singers, min(len(all_singers), 30))
 
-    if all_artist_themes:
-        artist_themes = random.sample(all_artist_themes, min(len(all_artist_themes), 30))
-        add_log(f"[Theme] '아티스트' 테마 스캔 완료. 총 {len(all_artist_themes)}명 발견 (30명 랜덤 표시).")
-    else:
-        artist_themes = []
-        add_log("[Theme] '아티스트' 테마를 찾지 못했습니다.")
+    cache.update({
+        "themes_charts": charts, "themes_collections": colls,
+        "themes_artists": artist_themes, "themes_genres": genres,
+        "last_updated": time.time()
+    })
 
-    global cache
-    cache.update({"themes_charts": charts, "themes_collections": colls, "themes_artists": artist_themes, "themes_genres": genres, "last_updated": time.time()})
-    add_log("--- ✅ 1단계: 테마 목록 생성 완료 ---")
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM themes")
+            for t in charts: cursor.execute("INSERT INTO themes VALUES (?, ?, ?)", ("charts", t["name"], t["path"]))
+            for t in colls: cursor.execute("INSERT INTO themes VALUES (?, ?, ?)", ("collections", t["name"], t["path"]))
+            for t in artist_themes: cursor.execute("INSERT INTO themes VALUES (?, ?, ?)", ("artists", t["name"], t["path"]))
+            for t in genres: cursor.execute("INSERT INTO themes VALUES (?, ?, ?)", ("genres", t["name"], t["path"]))
+            conn.commit()
+    except Exception as e: print(f"Error saving themes: {e}")
 
-    # 2단계: 전체 노래 인덱싱
-    add_log("--- 🚀 2단계: 전체 노래 인덱싱 시작 ---")
-    start_time = time.time()
+    scan_all_songs_to_db()
 
-    with status_lock: update_status["current_task"] = "전체 디렉토리 수집 중..."
-    add_log("[Indexing] Collecting all directories to scan...")
-    all_dirs = []
-    search_roots = [ROOT_DIR] + list(GENRE_ROOTS.values())
-    dir_count = 0
-    for r_path in search_roots:
-        try:
-            for root, _, _ in os.walk(r_path):
-                all_dirs.append(root)
-                dir_count += 1
-                if dir_count % 500 == 0:
-                    with status_lock:
-                        update_status["current_task"] = f"전체 디렉토리 수집 중... ({dir_count}개 발견)"
-        except OSError as e:
-            add_log(f"디렉토리 접근 오류: {r_path}: {e}", is_error=True)
 
-    total_dirs = len(all_dirs)
-    add_log(f"[Indexing] 총 {total_dirs}개의 디렉토리를 찾았습니다. 병렬 스캔을 시작합니다.")
+# --- 5. 메타데이터 (ManiaDB & Deezer) 엔진 ---
+def fetch_maniadb_metadata(artist, album):
+    try:
+        query = f"{artist} {album}"
+        url = f"http://www.maniadb.com/api/search/{urllib.parse.quote(query)}/?sr=album&display=1&key=example&v=0.5"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            root = ET.fromstring(response.text)
+            item = root.find(".//item")
+            if item is not None:
+                poster = item.find(".//image").text if item.find(".//image") is not None else None
+                if poster: poster = poster.replace("/s/", "/l/")
+                return {"poster": poster}
+    except: pass
+    return None
 
-    with status_lock: update_status["current_task"] = "음악 파일 스캔 중..."
-    all_songs = []
-    processed_count, success_count, failed_count = 0, 0, 0
-    with ThreadPoolExecutor(max_workers=12) as executor:
-        futures = {executor.submit(scan_folder_parallel, d): d for d in all_dirs}
-        for future in as_completed(futures):
-            processed_count += 1
-            try:
-                res = future.result()
-                if res: all_songs.extend(res)
-                success_count += 1
-            except Exception as e:
-                failed_count += 1
-                add_log(f"디렉토리 스캔 오류: {futures[future]}: {e}", is_error=True)
+def fetch_deezer_metadata(artist, album):
+    try:
+        query = f"{artist} {album}"
+        url = f"https://api.deezer.com/search?q={urllib.parse.quote(query)}&limit=1"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("data"):
+                poster = data["data"][0].get("album", {}).get("cover_xl") or data["data"][0].get("album", {}).get("cover_big")
+                return {"poster": poster}
+    except: pass
+    return None
 
-            if processed_count % 200 == 0 or processed_count == total_dirs:
-                percent = (processed_count / total_dirs) * 100 if total_dirs > 0 else 0
-                with status_lock:
-                    update_status["progress_text"] = f"{processed_count}/{total_dirs}"
-                    update_status["progress_percent"] = percent
-                    update_status["stats_text"] = f"성공: {success_count} | 실패: {failed_count}"
-                    update_status["current_task"] = "음악 파일 스캔 중..."
-
-    scan_time = time.time() - start_time
-    add_log(f"파일 스캔 완료. 총 {len(all_songs)}곡 발견. (소요 시간: {scan_time:.2f}초)")
-
-    db_start_time = time.time()
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.cursor()
-
-        with status_lock: update_status["current_task"] = "DB: 메타데이터 백업 중..."
-        add_log("[DB] Backing up old metadata...")
-        cursor.execute("CREATE TEMP TABLE old_meta AS SELECT artist, album, meta_poster FROM global_songs WHERE meta_poster IS NOT NULL")
-        posters_in_backup = cursor.execute("SELECT count(*) FROM old_meta").fetchone()[0]
-
-        with status_lock: update_status["current_task"] = "DB: 기존 데이터 삭제 중..."
-        add_log("[DB] Clearing old song data...")
-        cursor.execute("DELETE FROM global_songs")
-
-        with status_lock: update_status["current_task"] = f"DB: {len(all_songs)}곡 저장 중..."
-        add_log(f"[DB] Inserting {len(all_songs)} new songs...")
-        cursor.executemany("INSERT INTO global_songs (name, artist, album, stream_url, parent_path) VALUES (?, ?, ?, ?, ?)", all_songs)
-
-        with status_lock: update_status["current_task"] = "DB: 메타데이터 복원 중..."
-        add_log("[DB] Restoring metadata...")
-        cursor.execute("UPDATE global_songs SET meta_poster = (SELECT meta_poster FROM old_meta WHERE old_meta.artist = global_songs.artist AND old_meta.album = global_songs.album)")
-        posters_restored = cursor.execute("SELECT count(*) FROM global_songs WHERE meta_poster IS NOT NULL").fetchone()[0]
-
-        cursor.execute("DROP TABLE old_meta")
-        conn.commit()
-
-    db_time = time.time() - db_start_time
-    total_time = time.time() - start_time
-
-    final_message = f"총 {len(all_songs)}곡 인덱싱 완료 ({total_time:.2f}초 소요)"
-    add_log("--- ✅🎉 모든 스캔 및 인덱싱 작업이 완료되었습니다! ---")
-    add_log(f"📊 총 소요 시간: {total_time:.2f}s (테마/파일 스캔: {scan_time:.2f}s, DB: {db_time:.2f}s)")
-    add_log(f"📂 디렉토리: {success_count}개 스캔, {failed_count}개 실패")
-    add_log(f"🖼️ 포스터: {posters_restored}개 복원 (백업: {posters_in_backup}개)")
-
-    with status_lock:
+def start_metadata_update_thread():
+    global update_status
+    if update_status["is_running"]: return
+    update_status["is_running"] = True
+    update_status["last_log"] = "하이브리드 업데이트를 시작합니다..."
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT artist, album FROM global_songs WHERE meta_poster IS NULL OR meta_poster = ''")
+            targets = cursor.fetchall()
+            update_status["total"], update_status["current"], update_status["success"], update_status["fail"] = len(targets), 0, 0, 0
+            for artist, album in targets:
+                if not update_status["is_running"]: break
+                update_status["current"] += 1
+                update_status["last_log"] = f"찾는 중: {artist} - {album}"
+                meta = fetch_maniadb_metadata(artist, album) or fetch_deezer_metadata(artist, album)
+                if meta and meta.get("poster"):
+                    cursor.execute("UPDATE global_songs SET meta_poster = ? WHERE artist = ? AND album = ?", (meta["poster"], artist, album))
+                    update_status["success"] += 1
+                    conn.commit()
+                else: update_status["fail"] += 1
+                time.sleep(0.3)
+    except Exception as e: update_status["last_log"] = f"오류: {str(e)}"
+    finally:
         update_status["is_running"] = False
-        update_status["is_complete"] = True
-        update_status["complete_message"] = final_message
-        update_status["current_task"] = final_message
+        update_status["last_log"] = "모든 메타데이터 작업 완료."
 
-@app.route('/monitor')
-def monitor_page():
-    return MONITOR_PAGE_HTML
 
-@app.route('/api/indexing/start', methods=['POST'])
-def start_indexing():
-    with status_lock:
-        if update_status['is_running']:
-            return jsonify({"message": "이미 인덱싱 작업이 진행 중입니다."}), 409
+# --- 6. API 엔드포인트 ---
+@app.route('/api/metadata/start', methods=['GET'])
+def start_metadata_update():
+    if not update_status["is_running"]:
+        Thread(target=start_metadata_update_thread).start()
+        return jsonify({"message": "Started"})
+    return jsonify({"message": "Running"})
 
-    thread = Thread(target=scan_and_index_library)
-    thread.daemon = True
-    thread.start()
-    return jsonify({"message": "라이브러리 전체 스캔 및 인덱싱 작업을 시작했습니다."})
+@app.route('/api/metadata/status', methods=['GET'])
+def get_metadata_status():
+    return jsonify(update_status)
 
-@app.route('/api/indexing/status', methods=['GET'])
-def get_indexing_status():
-    with status_lock:
-        return jsonify(update_status)
+@app.route('/api/search', methods=['GET'])
+def search_songs():
+    query = request.args.get('q', '')
+    if not query: return jsonify([])
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        search_query = f"%{query}%"
+        cursor.execute('''
+            SELECT name, artist, album as albumName, stream_url, parent_path, meta_poster
+            FROM global_songs
+            WHERE name LIKE ? OR artist LIKE ? OR album LIKE ?
+            LIMIT 100
+        ''', (search_query, search_query, search_query))
+        return jsonify([dict(row) for row in cursor.fetchall()])
+
+@app.route('/api/theme-details/<path:theme_path>', methods=['GET'])
+def get_theme_details(theme_path):
+    decoded_path = urllib.parse.unquote(theme_path)
+    search_path = decoded_path.replace("장르/", "")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM global_songs WHERE parent_path LIKE ? ORDER BY parent_path, stream_url ASC", (f"{search_path}%",))
+        rows = cursor.fetchall()
+        groups = {}
+        for row in rows:
+            cat = row['parent_path'].split('/')[-1]
+            if cat not in groups: groups[cat] = []
+            groups[cat].append(dict(row))
+        return jsonify([{"category_name": k, "songs": v} for k, v in groups.items()])
+
+@app.route('/api/themes', methods=['GET'])
+def get_themes():
+    return jsonify({
+        "charts": cache["themes_charts"], "collections": cache["themes_collections"],
+        "artists": cache["themes_artists"], "genres": cache["themes_genres"]
+    })
 
 @app.route('/api/top100', methods=['GET'])
 def get_top100():
@@ -377,6 +296,7 @@ def get_top100():
         latest_dir = os.path.join(WEEKLY_CHART_PATH, latest_folder)
         rel_path = os.path.relpath(latest_dir, MUSIC_BASE)
 
+        # 1. DB 조회 (파일명 순서 유지)
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -384,31 +304,16 @@ def get_top100():
             rows = cursor.fetchall()
             if rows: return jsonify([dict(row) for row in rows])
 
-        print(f"[*] Direct scanning for Top 100: {latest_folder}")
-        songs = [get_song_info(e.name, latest_dir) for e in sorted(os.scandir(latest_dir), key=lambda x: x.name) if e.is_file() and e.name.lower().endswith(('.mp3', '.m4a', '.flac', '.dsf'))]
-        return jsonify([{"name": s[0], "artist": s[1], "album": s[2], "stream_url": s[3], "parent_path": s[4], "meta_poster": None} for s in songs])
+        # 2. DB 없으면 즉시 스캔 (파일명 순서 유지)
+        entries = sorted([e for e in os.scandir(latest_dir) if e.is_file() and e.name.lower().endswith(('.mp3', '.m4a', '.flac', '.dsf'))], key=lambda x: x.name)
+        songs = []
+        for entry in entries:
+            res = get_song_info(entry.name, latest_dir)
+            songs.append({"name": res[0], "artist": res[1], "album": res[2], "stream_url": res[3], "parent_path": res[4], "meta_poster": None})
+        return jsonify(songs)
     except Exception as e:
         print(f"Top100 Error: {e}")
         return jsonify([])
-
-@app.route('/api/themes', methods=['GET'])
-def get_themes():
-    return jsonify(cache)
-
-@app.route('/api/theme-details/<path:theme_path>', methods=['GET'])
-def get_theme_details(theme_path):
-    decoded_path = urllib.parse.unquote(theme_path).replace("장르/", "")
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM global_songs WHERE parent_path LIKE ? ORDER BY parent_path, stream_url ASC", (f"{decoded_path}%"))
-        rows = cursor.fetchall()
-        groups = {}
-        for row in rows:
-            cat = row['parent_path'].split('/')[-1]
-            if cat not in groups: groups[cat] = []
-            groups[cat].append(dict(row))
-        return jsonify([{"category_name": k, "songs": v} for k, v in groups.items()])
 
 @app.route('/stream/<path:file_path>', methods=['GET'])
 def stream_file(file_path):
@@ -416,4 +321,6 @@ def stream_file(file_path):
 
 if __name__ == '__main__':
     init_db()
+    load_themes_from_db() # ★ 필수: 시작 시 테마 로딩
+    Thread(target=scan_music_library).start()
     app.run(host='0.0.0.0', port=4444, debug=False)
