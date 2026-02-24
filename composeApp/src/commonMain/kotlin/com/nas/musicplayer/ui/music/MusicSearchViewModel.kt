@@ -15,6 +15,8 @@ import com.nas.musicplayer.network.httpClient
 import com.nas.musicplayer.network.toSongList
 import io.ktor.client.call.*
 import io.ktor.client.request.*
+import io.ktor.http.takeFrom
+import io.ktor.http.appendPathSegments
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
@@ -131,7 +133,13 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, themeDetails = emptyList()) }
             try {
-                val details = httpClient.get("$pythonBaseUrl/api/theme-details/${theme.path}").body<List<ThemeDetail>>()
+                val details = httpClient.get {
+                    url {
+                        takeFrom(pythonBaseUrl)
+                        appendPathSegments("api", "theme-details")
+                        appendPathSegments(theme.path.split("/"))
+                    }
+                }.body<List<ThemeDetail>>()
                 _uiState.update { it.copy(
                     themeDetails = details, 
                     isLoading = false 
