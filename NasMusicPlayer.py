@@ -404,42 +404,58 @@ def rebuild_library():
         conn.commit()
     scan_all_songs()
 
+def fetch_maniadb_metadata(artist, album):
+    try:
+        url = f"http://www.maniadb.com/api/search/{urllib.parse.quote(f'{artist} {album}')}/?sr=album&display=1&key=example&v=0.5"
+        res = requests.get(url, timeout=5)
+        if res.status_code == 200 and "<image>" in res.text:
+            parts = res.text.split("<![CDATA[")
+            if len(parts) > 1:
+                poster = parts[1].split("]]>")[0].replace("/s/", "/l/")
+                return {"poster": poster}
+    except: pass
+    return None
+
+def fetch_deezer_metadata(artist, album):
+    try:
+        res = requests.get(f"https://api.deezer.com/search?q={urllib.parse.quote(f'{artist} {album}')}&limit=1", timeout=5).json()
+        if res.get("data") and len(res["data"]) > 0:
+            return {"poster": res["data"][0]['album']['cover_xl']}
+    except: pass
+    return None
 
 def start_metadata_update_thread():
     global up_st
-    print("[*] 🛠️ 메타데이터 작업 요청을 받았습니다.")
+    print("[*] 🖼️ [메타데이터 엔진] 내부 로직 시작!")
 
-    # 작업 중인지 확인
     if up_st["is_running"]:
-        print("[!] 이미 작업 중입니다.")
+        print("[!] 이미 메타데이터 작업이 진행 중입니다.")
         return
 
     up_st["is_running"] = True
-    print("[*] 🖼️ [메타데이터 엔진] 시작!")
 
     try:
         with sqlite3.connect(DB_PATH, timeout=60) as conn:
             cursor = conn.cursor()
-            # 앨범 목록 다시 확인
+            # 메타데이터가 없는 것만 조회 (FAIL 제외)
             cursor.execute(
-                "SELECT DISTINCT artist, albumName FROM global_songs WHERE meta_poster IS NULL OR meta_poster = ''")
+                "SELECT DISTINCT artist, albumName FROM global_songs WHERE (meta_poster IS NULL OR meta_poster = '') AND meta_poster != 'FAIL'")
             targets = cursor.fetchall()
 
-        print(f"[*] 🔍 조회된 대상 앨범 수: {len(targets)}개")
+        total_count = len(targets)
+        print(f"[*] 🔍 업데이트할 앨범 총 {total_count:,}개 확인됨.")
 
-        if len(targets) == 0:
-            print("[!] 작업할 대상이 없습니다. (모든 메타데이터가 존재하거나 'FAIL' 상태입니다)")
+        if total_count == 0:
+            print("[*] ℹ️ 업데이트할 앨범이 없습니다.")
             up_st["is_running"] = False
             return
 
-        up_st.update({"total": len(targets), "current": 0, "success": 0, "fail": 0})
-        print(f"[*] 🖼️ 총 {total_targets:,}개의 앨범 메타데이터 업데이트를 수행합니다.")
+        up_st.update({"total": total_count, "current": 0, "success": 0, "fail": 0, "last_log": "병렬 작업 준비 중..."})
 
-        def update_album(art, alb):
+        def update_single_album(art, alb):
             try:
-                # 검색 시작 알림 (너무 많으면 로그가 과해지니 10% 단위로 콘솔에도 출력)
+                # 메타데이터 검색
                 meta = fetch_maniadb_metadata(art, alb) or fetch_deezer_metadata(art, alb)
-
                 with sqlite3.connect(DB_PATH, timeout=30) as conn:
                     if meta and meta.get("poster"):
                         conn.execute("UPDATE global_songs SET meta_poster = ? WHERE artist = ? AND albumName = ?",
@@ -450,13 +466,13 @@ def start_metadata_update_thread():
                         conn.execute("UPDATE global_songs SET meta_poster = 'FAIL' WHERE artist = ? AND albumName = ?",
                                      (art, alb))
                         conn.commit()
-                        return False, "실패(정보없음)"
+                        return False, "실패"
             except Exception as e:
-                return False, f"오류: {str(e)}"
+                return False, f"에러: {str(e)}"
 
         # 5개 스레드로 안전하게 병렬 처리
         with ThreadPoolExecutor(max_workers=5) as exe:
-            future_to_album = {exe.submit(update_album, art, alb): (art, alb) for art, alb in targets}
+            future_to_album = {exe.submit(update_single_album, art, alb): (art, alb) for art, alb in targets}
             for future in as_completed(future_to_album):
                 if not up_st["is_running"]: break
 
@@ -469,20 +485,18 @@ def start_metadata_update_thread():
                 else:
                     up_st["fail"] += 1
 
-                # 로그 상세화
                 if up_st["current"] % 5 == 0:
-                    up_st[
-                        "last_log"] = f"작업 중: {up_st['current']:,}/{up_st['total']:,} | 성공: {up_st['success']:,} | 실패: {up_st['fail']:,} | 방금: {art} - {alb} ({status})"
-                    # 콘솔에도 상세 로그 출력
+                    up_st["last_log"] = f"작업 중: {up_st['current']:,}/{up_st['total']:,} | 성공: {up_st['success']:,} | 실패: {up_st['fail']:,} | 방금: {art} - {alb} ({status})"
                     print(f"[*] [{up_st['current']}/{up_st['total']}] {status} - {art} - {alb}")
 
-                time.sleep(2.0)  # 서버 부하 방지용 강제 대기
+                time.sleep(1.5) # API 서버 보호를 위한 간격
 
     except Exception as e:
         print(f"[*] 메타데이터 엔진 치명적 오류: {e}")
     finally:
-        up_st.update({"is_running": False, "last_log": "✅ 모든 작업이 종료되었습니다."})
-        print("[*] 🎉 메타데이터 작업이 종료되었습니다.")
+        up_st["is_running"] = False
+        up_st["last_log"] = "✅ 모든 작업이 종료되었습니다."
+        print("[*] 🎉 메타데이터 작업 종료.")
 
 @app.route('/monitor')
 def render_monitor(): return render_template_string(MONITOR_HTML)
@@ -495,21 +509,12 @@ def get_meta(): return jsonify(up_st)
 
 @app.route('/api/metadata/start')
 def start_meta():
-    def task():
-        global up_st
-        up_st["is_running"] = True
-        try:
-            with sqlite3.connect(DB_PATH) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT DISTINCT artist, albumName FROM global_songs WHERE meta_poster IS NULL OR meta_poster = ''")
-                targets = cursor.fetchall()
-                up_st.update({"total": len(targets), "current": 0, "success": 0})
-                for art, alb in targets:
-                    if not up_st["is_running"]: break
-                    up_st["current"] += 1
-        finally: up_st["is_running"] = False
-    Thread(target=task).start()
-    return jsonify({"status": "ok"})
+    print("[*] 🔔 메타데이터 가동 요청 수신!")
+    if not up_st["is_running"]:
+        Thread(target=start_metadata_update_thread).start()
+        return jsonify({"status": "ok", "message": "엔진을 가동합니다."})
+    else:
+        return jsonify({"status": "error", "message": "이미 엔진이 작동 중입니다."})
 
 @app.route('/api/themes')
 def get_themes(): return jsonify(cache)
