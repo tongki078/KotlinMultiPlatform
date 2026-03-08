@@ -404,45 +404,85 @@ def rebuild_library():
         conn.commit()
     scan_all_songs()
 
+
 def start_metadata_update_thread():
     global up_st
-    if up_st["is_running"]: return
+    print("[*] 🛠️ 메타데이터 작업 요청을 받았습니다.")
+
+    # 작업 중인지 확인
+    if up_st["is_running"]:
+        print("[!] 이미 작업 중입니다.")
+        return
+
     up_st["is_running"] = True
-    print("[*] 🖼️ 메타데이터 업데이트 시작...")
+    print("[*] 🖼️ [메타데이터 엔진] 시작!")
+
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(DB_PATH, timeout=60) as conn:
             cursor = conn.cursor()
-            # 이미 메타가 있는 앨범은 건너뜀 (이어하기 자동 지원)
+            # 앨범 목록 다시 확인
             cursor.execute(
-                "SELECT DISTINCT artist, albumName FROM global_songs WHERE (meta_poster IS NULL OR meta_poster = '')")
+                "SELECT DISTINCT artist, albumName FROM global_songs WHERE meta_poster IS NULL OR meta_poster = ''")
             targets = cursor.fetchall()
-            up_st.update({"total": len(targets), "current": 0, "success": 0, "fail": 0})
 
-            print(f"[*] 총 {len(targets)}개의 앨범 메타데이터 작업 필요.")
+        print(f"[*] 🔍 조회된 대상 앨범 수: {len(targets)}개")
 
-            for art, alb in targets:
-                if not up_st["is_running"]: break
+        if len(targets) == 0:
+            print("[!] 작업할 대상이 없습니다. (모든 메타데이터가 존재하거나 'FAIL' 상태입니다)")
+            up_st["is_running"] = False
+            return
 
-                # 메타데이터 검색
+        up_st.update({"total": len(targets), "current": 0, "success": 0, "fail": 0})
+        print(f"[*] 🖼️ 총 {total_targets:,}개의 앨범 메타데이터 업데이트를 수행합니다.")
+
+        def update_album(art, alb):
+            try:
+                # 검색 시작 알림 (너무 많으면 로그가 과해지니 10% 단위로 콘솔에도 출력)
                 meta = fetch_maniadb_metadata(art, alb) or fetch_deezer_metadata(art, alb)
 
-                if meta and meta.get("poster"):
-                    cursor.execute("UPDATE global_songs SET meta_poster = ? WHERE artist = ? AND albumName = ?",
-                                   (meta["poster"], art, alb))
+                with sqlite3.connect(DB_PATH, timeout=30) as conn:
+                    if meta and meta.get("poster"):
+                        conn.execute("UPDATE global_songs SET meta_poster = ? WHERE artist = ? AND albumName = ?",
+                                     (meta["poster"], art, alb))
+                        conn.commit()
+                        return True, "성공"
+                    else:
+                        conn.execute("UPDATE global_songs SET meta_poster = 'FAIL' WHERE artist = ? AND albumName = ?",
+                                     (art, alb))
+                        conn.commit()
+                        return False, "실패(정보없음)"
+            except Exception as e:
+                return False, f"오류: {str(e)}"
+
+        # 5개 스레드로 안전하게 병렬 처리
+        with ThreadPoolExecutor(max_workers=5) as exe:
+            future_to_album = {exe.submit(update_album, art, alb): (art, alb) for art, alb in targets}
+            for future in as_completed(future_to_album):
+                if not up_st["is_running"]: break
+
+                success, status = future.result()
+                art, alb = future_to_album[future]
+
+                up_st["current"] += 1
+                if success:
                     up_st["success"] += 1
                 else:
                     up_st["fail"] += 1
 
-                up_st["current"] += 1
-                if up_st["current"] % 10 == 0:
-                    conn.commit()
-                    up_st["last_log"] = f"진행중: {up_st['current']}/{up_st['total']} (성공: {up_st['success']})"
+                # 로그 상세화
+                if up_st["current"] % 5 == 0:
+                    up_st[
+                        "last_log"] = f"작업 중: {up_st['current']:,}/{up_st['total']:,} | 성공: {up_st['success']:,} | 실패: {up_st['fail']:,} | 방금: {art} - {alb} ({status})"
+                    # 콘솔에도 상세 로그 출력
+                    print(f"[*] [{up_st['current']}/{up_st['total']}] {status} - {art} - {alb}")
 
-                # API 차단 방지용 대기
-                time.sleep(1.0)
+                time.sleep(2.0)  # 서버 부하 방지용 강제 대기
+
+    except Exception as e:
+        print(f"[*] 메타데이터 엔진 치명적 오류: {e}")
     finally:
-        up_st.update({"is_running": False, "last_log": "작업 완료"})
-        print("[*] 🎉 메타데이터 업데이트 종료.")
+        up_st.update({"is_running": False, "last_log": "✅ 모든 작업이 종료되었습니다."})
+        print("[*] 🎉 메타데이터 작업이 종료되었습니다.")
 
 @app.route('/monitor')
 def render_monitor(): return render_template_string(MONITOR_HTML)
@@ -479,18 +519,15 @@ def get_details(tp):
     p = urllib.parse.unquote(tp)
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
-        # 장르 조회 시 LIMIT 1000을 추가하여 서버 멈춤 방지
+        # 데이터 구조를 단순하게 평탄화(Flat List)해서 전달합니다.
         rows = conn.execute(
-            "SELECT name, artist, albumName, stream_url, parent_path, meta_poster FROM global_songs WHERE parent_path LIKE ? ORDER BY artist, name ASC LIMIT 1000",
+            "SELECT name, artist, albumName, stream_url, parent_path, meta_poster FROM global_songs WHERE parent_path LIKE ? ORDER BY artist, name ASC LIMIT 500",
             (f"{p}%",)
         ).fetchall()
 
-        groups = {}
-        for r in rows:
-            cat = r['parent_path'].split('/')[-1]
-            if cat not in groups: groups[cat] = []
-            groups[cat].append(dict(r))
-        return jsonify([{"category_name": k, "songs": v} for k, v in groups.items()])
+        # 앱에서 변환하기 쉽게 리스트로 바로 전달
+        return jsonify([dict(r) for r in rows])
+
 
 @app.route('/api/refresh')
 def refresh():
