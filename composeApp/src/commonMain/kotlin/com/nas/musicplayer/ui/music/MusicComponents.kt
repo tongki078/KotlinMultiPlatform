@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -59,7 +60,7 @@ fun SongListItem(
             
             Spacer(modifier = Modifier.width(16.dp))
             
-            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) { // 우측 간격 추가
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                 Text(song.name ?: "제목 없음", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold, maxLines = 1)
                 Text(song.artist, style = MaterialTheme.typography.bodyMedium, color = Color.Gray, maxLines = 1)
             }
@@ -75,7 +76,7 @@ fun SongListItem(
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(20.dp).rotate(rotation)
                     )
-                    Spacer(modifier = Modifier.width(4.dp)) // 간격 확보
+                    Spacer(modifier = Modifier.width(4.dp))
                 } else if (isDownloaded) {
                     Icon(
                         Icons.Default.DownloadDone, 
@@ -83,12 +84,12 @@ fun SongListItem(
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(22.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp)) // 간격 확보
+                    Spacer(modifier = Modifier.width(4.dp))
                 }
                 
                 IconButton(
                     onClick = onMoreClick,
-                    modifier = Modifier.size(40.dp) // 버튼 영역 표준화
+                    modifier = Modifier.size(40.dp)
                 ) {
                     Icon(Icons.Default.MoreVert, null, tint = Color.Gray)
                 }
