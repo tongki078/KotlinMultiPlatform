@@ -218,21 +218,35 @@ def init_db():
                 stream_url TEXT, parent_path TEXT, meta_poster TEXT
             )
         ''')
-        # albumName 컬럼 누락 방지 (기존 테이블 업데이트)
-        try: c.execute("ALTER TABLE global_songs ADD COLUMN albumName TEXT")
-        except: pass
-        c.execute('CREATE INDEX IF NOT EXISTS idx_path ON global_songs(parent_path)')
+        # 1. albumName 컬럼 유지 보수
+        try:
+            c.execute("ALTER TABLE global_songs ADD COLUMN albumName TEXT")
+        except:
+            pass
+
+        # 2. 검색 최적화를 위한 복합 인덱스 생성
+        # 기존 인덱스가 있다면 삭제하고 새로 생성
+        try:
+            c.execute('DROP INDEX IF EXISTS idx_path')
+        except:
+            pass
+        c.execute('CREATE INDEX IF NOT EXISTS idx_songs_optimized ON global_songs(parent_path, artist, name)')
+
         conn.commit()
 
 def load_cache():
     global cache
+    print("[*] 🔄 시스템 캐시 및 테마 로딩 시작...")
     try:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             for t in ["charts", "collections", "artists", "genres"]:
                 rows = conn.execute("SELECT name, path FROM themes WHERE type=?", (t,)).fetchall()
                 cache[t] = [dict(r) for r in rows]
-    except: pass
+                print(f"    ✅ [캐싱 완료] {t.upper():<12} : {len(rows):,} 항목 로드됨")
+        print("[*] 🎉 모든 테마 캐싱 작업이 성공적으로 완료되었습니다.")
+    except Exception as e:
+        print(f"[!] 캐시 로딩 실패: {e}")
 
 def get_info(f, d):
     nm = os.path.splitext(f)[0]
@@ -390,6 +404,46 @@ def rebuild_library():
         conn.commit()
     scan_all_songs()
 
+def start_metadata_update_thread():
+    global up_st
+    if up_st["is_running"]: return
+    up_st["is_running"] = True
+    print("[*] 🖼️ 메타데이터 업데이트 시작...")
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            # 이미 메타가 있는 앨범은 건너뜀 (이어하기 자동 지원)
+            cursor.execute(
+                "SELECT DISTINCT artist, albumName FROM global_songs WHERE (meta_poster IS NULL OR meta_poster = '')")
+            targets = cursor.fetchall()
+            up_st.update({"total": len(targets), "current": 0, "success": 0, "fail": 0})
+
+            print(f"[*] 총 {len(targets)}개의 앨범 메타데이터 작업 필요.")
+
+            for art, alb in targets:
+                if not up_st["is_running"]: break
+
+                # 메타데이터 검색
+                meta = fetch_maniadb_metadata(art, alb) or fetch_deezer_metadata(art, alb)
+
+                if meta and meta.get("poster"):
+                    cursor.execute("UPDATE global_songs SET meta_poster = ? WHERE artist = ? AND albumName = ?",
+                                   (meta["poster"], art, alb))
+                    up_st["success"] += 1
+                else:
+                    up_st["fail"] += 1
+
+                up_st["current"] += 1
+                if up_st["current"] % 10 == 0:
+                    conn.commit()
+                    up_st["last_log"] = f"진행중: {up_st['current']}/{up_st['total']} (성공: {up_st['success']})"
+
+                # API 차단 방지용 대기
+                time.sleep(1.0)
+    finally:
+        up_st.update({"is_running": False, "last_log": "작업 완료"})
+        print("[*] 🎉 메타데이터 업데이트 종료.")
+
 @app.route('/monitor')
 def render_monitor(): return render_template_string(MONITOR_HTML)
 
@@ -425,7 +479,12 @@ def get_details(tp):
     p = urllib.parse.unquote(tp)
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
-        rows = conn.execute("SELECT * FROM global_songs WHERE parent_path LIKE ? ORDER BY parent_path, stream_url ASC", (f"{p}%",)).fetchall()
+        # 장르 조회 시 LIMIT 1000을 추가하여 서버 멈춤 방지
+        rows = conn.execute(
+            "SELECT name, artist, albumName, stream_url, parent_path, meta_poster FROM global_songs WHERE parent_path LIKE ? ORDER BY artist, name ASC LIMIT 1000",
+            (f"{p}%",)
+        ).fetchall()
+
         groups = {}
         for r in rows:
             cat = r['parent_path'].split('/')[-1]

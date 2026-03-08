@@ -33,19 +33,12 @@ data class ThemeResponse(
     val genres: List<Theme> = emptyList()
 )
 
-@Serializable
-data class ThemeDetail(
-    val category_name: String,
-    val songs: List<Song>
-)
-
 data class MusicSearchUiState(
     val songs: List<Song> = emptyList(),
     val themes: List<Theme> = emptyList(),
     val collectionThemes: List<Theme> = emptyList(),
     val artistThemes: List<Theme> = emptyList(),
     val genreThemes: List<Theme> = emptyList(),
-    val themeDetails: List<ThemeDetail> = emptyList(),
     val isLoading: Boolean = false,
     val searchQuery: String = "",
     val selectedArtist: Artist? = null,
@@ -131,17 +124,17 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
 
     fun loadThemeDetails(theme: Theme) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, themeDetails = emptyList()) }
+            _uiState.update { it.copy(isLoading = true, songs = emptyList()) }
             try {
-                val details = httpClient.get {
+                val songs = httpClient.get {
                     url {
                         takeFrom(pythonBaseUrl)
                         appendPathSegments("api", "theme-details")
                         appendPathSegments(theme.path.split("/"))
                     }
-                }.body<List<ThemeDetail>>()
+                }.body<List<Song>>()
                 _uiState.update { it.copy(
-                    themeDetails = details, 
+                    songs = songs, 
                     isLoading = false 
                 ) }
             } catch (e: Exception) {
@@ -153,7 +146,7 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
 
     fun loadTop100() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, searchQuery = "", songs = emptyList(), themeDetails = emptyList()) }
+            _uiState.update { it.copy(isLoading = true, searchQuery = "", songs = emptyList()) }
             try {
                 val response = httpClient.get("$pythonBaseUrl/api/top100").body<List<Song>>()
                 val pythonWeeklySongs = response.map { 
