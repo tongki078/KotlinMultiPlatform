@@ -132,7 +132,7 @@ MONITOR_HTML = '''
             </div>
 
             <div style="display: flex; gap: 10px;">
-                <button onclick="fetch('/api/refresh')">🚀 라이브러리 전체 재스캔</button>
+                <button onclick="fetch('/api/refresh')" style="background: #10b981;">🖼️ 메인 화면 썸네일 동기화 (이미지 연결)</button>
             </div>
 
             <hr style="margin: 20px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.1);">
@@ -162,21 +162,25 @@ MONITOR_HTML = '''
             <div style="text-align: center; margin-bottom: 15px;">
                 <span id="meta-target-badge" class="badge badge-idle" style="background: #818cf8;">대상: 전체</span>
             </div>
-            <div class="stat-grid" style="grid-template-columns: 1fr;">
+            <div class="stat-grid" style="grid-template-columns: 1fr 1fr;">
+                <div class="stat-card" style="grid-column: 1 / -1;">
+                    <span id="meta-db-success" class="stat-value" style="color: var(--success);">0</span>
+                    <span class="stat-label">라이브러리 전체 성공</span>
+                </div>
                 <div class="stat-card">
+                    <span id="meta-db-pending" class="stat-value" style="color: var(--warning);">0</span>
+                    <span class="stat-label">남은 미매칭</span>
+                </div>
+                <div class="stat-card">
+                    <span id="meta-db-fail" class="stat-value" style="color: var(--danger);">0</span>
+                    <span class="stat-label">실패(FAIL)</span>
+                </div>
+                <div class="stat-card" style="grid-column: 1 / -1; background: rgba(56, 189, 248, 0.1);">
                     <span id="meta-progress" class="stat-value">0%</span>
-                    <span class="stat-label">진행률</span>
-                </div>
-                <div class="stat-card">
-                    <span id="meta-success" class="stat-value" style="color: var(--success);">0</span>
-                    <span class="stat-label">매칭 성공</span>
-                </div>
-                <div class="stat-card">
-                    <span id="meta-fail" class="stat-value" style="color: var(--danger);">0</span>
-                    <span class="stat-label">매칭 실패</span>
+                    <span class="stat-label">현재 작업 진행률 (배치)</span>
                 </div>
             </div>
-            <button id="stop-meta-btn" class="secondary" style="width: 100%; background: var(--danger); display: none;" onclick="stopMeta()">엔진 중지</button>
+            <button id="stop-meta-btn" class="secondary" style="width: 100%; background: var(--danger); margin-top:10px; display: none;" onclick="stopMeta()">엔진 중지</button>
         </div>
 
         <div class="box full-width">
@@ -186,9 +190,12 @@ MONITOR_HTML = '''
     </div>
 
     <script>
+        // 1. 전역 변수 설정
         let lastIdxLog = "";
+        let lastMetaLog = "";
         const logBox = document.getElementById('log-box');
 
+        // 2. 로그 출력 함수
         function addLog(tag, msg) {
             const div = document.createElement('div');
             div.className = 'log-entry';
@@ -199,78 +206,53 @@ MONITOR_HTML = '''
             if(logBox.childElementCount > 500) logBox.removeChild(logBox.firstChild);
         }
 
+        // 3. 메타데이터 엔진 시작 함수
         function startMeta(category) {
             const url = category ? `/api/metadata/start?q=${encodeURIComponent(category)}` : '/api/metadata/start';
             fetch(url).then(r=>r.json()).then(d=>{
-                if(d.status === 'ok') {
-                    addLog("SYSTEM", d.message);
-                } else {
-                    alert(d.message);
-                }
+                if(d.status === 'ok') addLog("SYSTEM", d.message);
+                else alert(d.message);
             });
         }
 
-        // NasMusicPlayer.py 내 MONITOR_HTML의 <script> 영역에 추가
+        // 4. 엔진 중지 함수
+        function stopMeta() {
+            if(!confirm("진행 중인 매칭 작업을 중지하시겠습니까?")) return;
+            fetch('/api/metadata/stop').then(r=>r.json()).then(d=>{ addLog("SYSTEM", d.message); });
+        }
+
+        // 5. 실패 항목 초기화 함수
         function resetFail() {
             if(!confirm("매칭에 실패했던 항목들을 초기화하고 다시 시도하시겠습니까?")) return;
-
-            fetch('/api/metadata/reset_fail')
-                .then(r => r.json())
-                .then(d => {
-                    alert(d.message);
-                    addLog("SYSTEM", d.message);
-                })
-                .catch(err => {
-                    console.error(err);
-                    alert("초기화 중 오류가 발생했습니다.");
-                });
+            fetch('/api/metadata/reset_fail').then(r=>r.json()).then(d=>{
+                alert(d.message);
+                addLog("SYSTEM", d.message);
+            });
         }
 
-        function stopMeta() {
-            // 현재 중지 API는 없지만, up_st["is_running"] = False 로 만드는 로직이 필요할 수 있음
-            addLog("SYSTEM", "중지 요청은 현재 지원되지 않습니다. 작업이 완료될 때까지 기다려주세요.");
-        }
-
+        // 6. 상태 실시간 업데이트 함수
         function update() {
             fetch('/api/indexing/status').then(r=>r.json()).then(d=>{
                 const p = (d.total_dirs > 0 ? (d.processed_dirs / d.total_dirs * 100) : 0).toFixed(2);
                 document.getElementById('progress-bar').style.width = p + '%';
                 document.getElementById('progress-text').innerText = `${d.processed_dirs.toLocaleString()} / ${d.total_dirs.toLocaleString()} (${p}%)`;
                 document.getElementById('stat-total').innerText = d.songs_found.toLocaleString();
-                document.getElementById('stat-speed').innerText = d.speed;
-                document.getElementById('stat-eta').innerText = d.eta;
-
-                const badge = document.getElementById('status-badge');
-                if(d.is_running) {
-                    badge.innerText = "인덱싱 진행 중";
-                    badge.className = "badge badge-running";
-                } else {
-                    badge.innerText = "시스템 대기 중";
-                    badge.className = "badge badge-idle";
-                }
-
-                if(d.last_log && d.last_log !== lastIdxLog) {
-                    addLog("INDEX", d.last_log);
-                    lastIdxLog = d.last_log;
-                }
+                if(d.last_log && d.last_log !== lastIdxLog) { addLog("INDEX", d.last_log); lastIdxLog = d.last_log; }
             });
 
             fetch('/api/metadata/status').then(r=>r.json()).then(d=>{
                 const p = (d.total > 0 ? (d.current / d.total * 100) : 0).toFixed(1);
-                document.getElementById('meta-progress').innerText = p + '%';
-                document.getElementById('meta-success').innerText = d.success.toLocaleString();
-                document.getElementById('meta-fail').innerText = d.fail.toLocaleString();
+                document.getElementById('meta-progress').innerText = `${p}% (${d.current.toLocaleString()} / ${d.total.toLocaleString()})`;
+                document.getElementById('meta-db-success').innerText = (d.db_success || 0).toLocaleString();
+                document.getElementById('meta-db-fail').innerText = (d.db_fail || 0).toLocaleString();
+                document.getElementById('meta-db-pending').innerText = (d.db_pending || 0).toLocaleString();
                 document.getElementById('meta-target-badge').innerText = "대상: " + (d.target || "전체");
-
-                const stopBtn = document.getElementById('stop-meta-btn');
-                if(d.is_running) {
-                    stopBtn.style.display = 'block';
-                } else {
-                    stopBtn.style.display = 'none';
-                }
+                if(d.last_log && d.last_log !== lastMetaLog) { addLog("META", d.last_log); lastMetaLog = d.last_log; }
+                document.getElementById('stop-meta-btn').style.display = d.is_running ? 'block' : 'none';
             });
         }
 
+        // 초기화
         setInterval(update, 1000);
         addLog("SYSTEM", "모니터링 대시보드가 준비되었습니다.");
     </script>
@@ -283,9 +265,11 @@ MONITOR_HTML = '''
 # 3. 핵심 로직: DB, 스캔, 인덱싱 (중간 저장 및 이어하기)
 # ==========================================
 def init_db():
-    print("[*] 🛠️ DB 엔진 최적화 및 캐시 테이블 생성 중...")
+    print("[*] 🛠️ DB 엔진 최적화 및 테이블 점검 중...")
     with sqlite3.connect(DB_PATH, timeout=600) as conn:
         conn.execute('PRAGMA journal_mode=WAL')
+
+        # 1. global_songs 테이블
         conn.execute('''
             CREATE TABLE IF NOT EXISTS global_songs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -294,32 +278,51 @@ def init_db():
                 genre TEXT, release_date TEXT, album_artist TEXT
             )
         ''')
-        # [핵심] 검색할 데이터만 따로 관리하는 뷰 또는 테이블 생성
+
+        # 2. themes 테이블 생성
         conn.execute('''
-            CREATE TABLE IF NOT EXISTS metadata_cache (
-                artist TEXT, albumName TEXT,
-                PRIMARY KEY (artist, albumName)
+            CREATE TABLE IF NOT EXISTS themes (
+                type TEXT, name TEXT, path TEXT, image_url TEXT,
+                PRIMARY KEY (type, path)
             )
         ''')
-        # 검색 대상 인덱스
+
+        # [중요] 기존 테이블에 image_url 컬럼이 없는 경우를 위한 강제 추가 로직
+        try:
+            conn.execute("ALTER TABLE themes ADD COLUMN image_url TEXT")
+            print("[*] themes 테이블에 image_url 컬럼을 추가했습니다.")
+        except sqlite3.OperationalError:
+            # 이미 컬럼이 있는 경우 에러가 나므로 무시함
+            pass
+
         conn.execute('CREATE INDEX IF NOT EXISTS idx_grouping ON global_songs(artist, albumName)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_path ON global_songs(parent_path)')
         conn.commit()
-    print("[*] ✅ DB 최적화 및 캐시 테이블 준비 완료.")
+    print("[*] ✅ DB 구조 점검 완료.")
 
 
 def load_cache():
     global cache
-    print("[*] 🔄 시스템 캐시 및 테마 로딩 시작...")
+    print("[*] 🔄 시스템 캐시 로딩 시작...")
     try:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
+            total_count = 0
             for t in ["charts", "collections", "artists", "genres"]:
-                rows = conn.execute("SELECT name, path FROM themes WHERE type=?", (t,)).fetchall()
+                rows = conn.execute("SELECT name, path, image_url FROM themes WHERE type=?", (t,)).fetchall()
                 cache[t] = [dict(r) for r in rows]
-                print(f"    ✅ [캐싱 완료] {t.upper():<12} : {len(rows):,} 항목 로드됨")
-        print("[*] 🎉 모든 테마 캐싱 작업이 성공적으로 완료되었습니다.")
+                count = len(rows)
+                total_count += count
+                print(f"    - {t.upper():<12}: {count}개 항목 로드됨")
+
+            print(f"[*] 🎉 캐시 로딩 완료 (총 {total_count}개 항목)")
+
+            # 데이터가 비어있으면 경고 로그 출력
+            if total_count == 0:
+                print("[!] 경고: DB에 저장된 테마 데이터가 없습니다. '라이브러리 재스캔'이 필요합니다.")
+
     except Exception as e:
-        print(f"[!] 캐시 로딩 실패: {e}")
+        print(f"[!] 캐시 로딩 중 치명적 오류: {e}")
 
 
 def get_info(f, d):
@@ -530,7 +533,7 @@ def finalize_library():
 
 def rebuild_library():
     global cache
-    print("[*] Rebuilding Themes...")
+    print("[*] 🔄 테마별 대표 이미지 추출 및 리스트 갱신 중...")
 
     def sub(p):
         return [d.name for d in os.scandir(p) if d.is_dir()] if os.path.exists(p) else []
@@ -541,119 +544,118 @@ def rebuild_library():
 
     a_list = []
     if os.path.exists(ARTIST_ROOT):
-        all_a = [{"name": s.name, "path": f"국내/가수/{i.name}/{s.name}"} for i in os.scandir(ARTIST_ROOT) if i.is_dir() for
-                 s in os.scandir(i.path) if s.is_dir()]
-        if all_a: a_list = random.sample(all_a, min(len(all_a), 30))
+        all_a = [{"name": s.name, "path": f"국내/가수/{i.name}/{s.name}"}
+                 for i in os.scandir(ARTIST_ROOT) if i.is_dir()
+                 for s in os.scandir(i.path) if s.is_dir()]
+        if all_a: a_list = random.sample(all_a, min(len(all_a), 60))
 
-    cache.update({"charts": c_list, "collections": m_list, "artists": a_list, "genres": g_list})
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("DELETE FROM themes")
         for t, l in [('charts', c_list), ('collections', m_list), ('artists', a_list), ('genres', g_list)]:
-            conn.executemany("INSERT INTO themes VALUES (?,?,?)", [(t, i['name'], i['path']) for i in l])
+            for item in l:
+                # [개선] meta_poster가 NULL, 'FAIL', 빈 문자열이 아닌 정상적인 URL만 가져오도록 함
+                row = conn.execute(
+                    "SELECT meta_poster FROM global_songs WHERE parent_path LIKE ? AND meta_poster IS NOT NULL AND meta_poster != 'FAIL' AND meta_poster != '' LIMIT 1",
+                    (f"{item['path']}%",)
+                ).fetchone()
+                img = row[0] if row else None
+                item['image_url'] = img
+                conn.execute("INSERT OR REPLACE INTO themes (type, name, path, image_url) VALUES (?,?,?,?)",
+                             (t, item['name'], item['path'], img))
         conn.commit()
-    scan_all_songs()
 
-
-# 기존의 fetch_maniadb_metadata와 fetch_metadata_smart를 아래 코드로 대체하세요.
-
-def fetch_maniadb_metadata(artist, album):
-    try:
-        # Maniadb 타임아웃 문제를 해결하기 위해 타임아웃을 8초로 늘리고
-        # 검색 실패 시 바로 예외 처리하도록 합니다.
-        query = f"{artist} {album}".strip()
-        url = f"http://www.maniadb.com/api/search/{urllib.parse.quote(query)}/?sr=album&display=1&key=example&v=0.5"
-        res = requests.get(url, timeout=8, headers={'User-Agent': 'Mozilla/5.0'})
-
-        if res.status_code == 200:
-            t = res.text
-            img = re.search(r'<image><!\[CDATA\[(.*?)]]>', t)
-            if img:
-                return {
-                    "poster": img.group(1).replace("/s/", "/l/"),
-                    "genre": "K-Pop"
-                }
-    except Exception as e:
-        # 타임아웃 발생 시 무거운 Maniadb를 다시 시도하지 않도록 로그만 남김
-        return None
-    return None
+    cache.update({"charts": c_list, "collections": m_list, "artists": a_list, "genres": g_list})
+    print(f"[*] ✅ 테마 이미지 갱신 완료! (차트:{len(c_list)}, 모음:{len(m_list)}, 가수:{len(a_list)})")
+    load_cache()
 
 
 # ==========================================
 # 4. 메타데이터 엔진 (국내 폴더 우선순위 적용)
 # ==========================================
-
 def clean_query_text(text, is_artist=False, folder_type=None):
     if not text or text == 'Unknown Artist': return ""
-    s = text  # 1. 공통: 모든 장르에서 괄호 및 대괄호 내용 삭제 (검색 노이즈 제거)
+    s = text
+
+    # 1. 가수 이름 특화 정제 (가장 먼저 실행)
+    if is_artist:
+        # "윤종신 2집" -> "윤종신" / "다비치 1 5집" -> "다비치"
+        s = re.sub(r'\s*\d+\.?\d*\s*집', '', s).strip()
+        # "LE SSERAFIM (르세라핌), j-hope" -> "LE SSERAFIM"
+        s = re.split(r'[,/&]|\(', s)[0].strip()
+
+    # 2. 괄호 및 날짜 제거
     s = re.sub(r'\(.*?\)|\[.*?\]|\{.*?\}', ' ', s)
+    s = re.sub(r'\d{2,4}\.\d{2}\.\d{2}', ' ', s)
 
-    # 2. 카테고리별 특화 정제 (분기 로직)
-    if folder_type == 'OST':
-        # OST는 'Original Soundtrack' 같은 단어가 검색을 방해하므로 제거
-        s = re.sub(r'(?i)ost|original soundtrack|soundtrack|motion picture|bgm|감성|테마|score', '', s)
-    elif folder_type == '일본':
-        # 일본곡: 애니메이션 관련 태그 및 특수 기호 제거
-        s = re.sub(r'(?i)anime|animation|tv-size|op|ed|theme', '', s)
-    elif folder_type == '클래식':
-        # 클래식: 오케스트라, 지휘자 정보보다 작곡가/곡명에 집중
-        s = re.sub(r'(?i)symphony|concerto|sonata|quartet|orchestra|conducting|conductor|philharmonic', '', s)
-    elif folder_type in ['DSD', '외국']:
-        # 외국곡 및 고음질: 리마스터링 버전 및 기술 태그 제거
-        s = re.sub(r'(?i)sacd|shm-cd|dvd-audio|dualdisc|mqa|hi-res|remastered|expanded|deluxe|anniversary', '', s)
+    # 3. 트랙 번호 제거 (10cm, 2PM 등 이름 보호)
+    s = re.sub(r'^\d{1,3}[\s\.\-_/]+', '', s.strip())
 
-    # 3. 공통: 트랙 번호, 기술적 확장자, 무의미한 태그 제거
-    s = re.sub(r'^[0-9]+[\s\.\-_/]+', '', s)
-    s = re.sub(r'(?i)\b(\d+bit|\d+khz|flac|mp3|wav|m4a|dsf|dsd|320k|cd\d+|disc\d+|vol\.\d+|volume\s*\d+)\b', ' ', s)
+    # 4. 기타 불필요한 키워드 제거
+    s = re.sub(r'(?i)\b(CD\s*\d+|Disc\s*\d+|FLAC|320K|HIDEL|Vol\.\s*\d+|Part\.\s*\d+)\b', ' ', s)
+    if not is_artist:
+        s = re.sub(r'(?i)\b(싱글|정규|베스트|미니앨범|EP|Album|Collection|TOP\s*100|차트)\b', ' ', s)
 
-    # 4. 특수문자 정리 (한/영/일 언어 유지 및 다중 공백 정리)
+    # 5. 최종 정리
     s = re.sub(r'[^\w\s가-힣ぁ-んァ-ヶー一-龠]', ' ', s)
     return re.sub(r'\s+', ' ', s).strip()
 
-
 def fetch_metadata_smart(artist, album, title, folder_type=None):
-    """
-    Plan A: 가수명 + 앨범명 (가장 정확)
-    Plan B: 가수명 + 곡 제목 (앨범명이 '1집' 등 모호할 때)
-    Plan C: 앨범명 단독 (OST 등에서 효과적)
-    Plan D: 가수명 단독 (최후의 수단)
-    """
-    q_art = clean_query_text(artist, is_artist=True, folder_type=folder_type)
+    # 1. 가수명 분리: 한글/영어 혼용 또는 여러 가수 대응
+    # 예: "LE SSERAFIM 르세라핌 j hope" -> ["LE SSERAFIM", "르세라핌", "j hope"]
+    raw_parts = re.split(r'[,/&]|\(|\)', artist)
+    artist_list = []
+    for rp in raw_parts:
+        rp = rp.strip()
+        if not rp: continue
+        artist_list.append(rp)
+        # 한글과 영어가 공백으로 섞여 있으면 추가로 쪼개기
+        m = re.findall(r'[a-zA-Z\s]{2,}|[가-힣\s]{2,}', rp)
+        if len(m) > 1:
+            artist_list.extend([x.strip() for x in m if x.strip()])
+
+    # 중복 제거 및 정제
+    artist_list = list(dict.fromkeys(artist_list))
+
     q_alb = clean_query_text(album, is_artist=False, folder_type=folder_type)
     q_tit = clean_query_text(title, is_artist=False, folder_type=folder_type)
+    is_chart = any(x in (album or "") for x in ['멜론', '지니', '벅스', '월간', '주간', '차트', 'TOP', 'Top'])
+    is_theme = any(x in (folder_type or "") for x in ['차트', '모음']) or is_chart
 
-    if not q_art and not q_alb: return None
+    # 분리된 이름들로 루프를 돌며 검색 성공할 때까지 시도
+    for raw_art in artist_list:
+        q_art = clean_query_text(raw_art, is_artist=True, folder_type=folder_type)
+        if not q_art: continue
 
-    # 시도할 전략 리스트 구성
-    strategies = []
-    if q_art and q_alb: strategies.append((q_art, q_alb))  # Plan A
-    if q_art and q_tit: strategies.append((q_art, q_tit))  # Plan B
-    if folder_type == 'OST' and q_alb: strategies.append(("", q_alb))  # Plan C
-    if q_art: strategies.append((q_art, ""))  # Plan D
+        strategies = []
+        if is_theme:
+            if q_art and q_tit: strategies.append((q_art, q_tit))
+            if q_art: strategies.append((q_art, ""))
+        else:
+            if q_art and q_alb and len(q_alb) > 1: strategies.append((q_art, q_alb))
+            if q_art and q_tit: strategies.append((q_art, q_tit))
+            if q_art: strategies.append((q_art, ""))
 
-    seen = set()
-    for a_query, b_query in strategies:
-        if (a_query, b_query) in seen: continue
-        seen.add((a_query, b_query))
+        seen = set()
+        for a_q, b_q in strategies:
+            if (a_q, b_q) in seen: continue
+            seen.add((a_q, b_q))
 
-        # 1. Deezer API (글로벌 소스)
-        res = fetch_deezer_metadata(a_query, b_query)
-        if res: return res
-
-        # 2. Maniadb (국내 소스 - 외국곡 아닐 때만)
-        if folder_type not in ['외국', 'DSD']:
-            res = fetch_maniadb_metadata(a_query, b_query)
+            # Deezer (글로벌 소스 - 르세라핌 같은 영어권 가수 매칭에 강력함)
+            res = fetch_deezer_metadata(a_q, b_q)
             if res: return res
 
-        # API Block 방지를 위한 미세 지연 (0.3초)
-        time.sleep(0.3)
-
+            # Maniadb (국내 소스)
+            if folder_type not in ['외국', 'DSD']:
+                res = fetch_maniadb_metadata(a_q, b_q)
+                if res: return res
+            time.sleep(0.2)
     return None
 
-
 def fetch_deezer_metadata(artist, album):
+    # 1. 앨범(Album) 전용 검색 시도
     try:
-        res = requests.get(f"https://api.deezer.com/search/album?q={urllib.parse.quote(f'{artist} {album}')}&limit=1",
-                           timeout=5).json()
+        url = f"https://api.deezer.com/search/album?q={urllib.parse.quote(f'{artist} {album}')}&limit=1"
+        res = requests.get(url, timeout=5).json()
         if res.get("data") and len(res["data"]) > 0:
             alb_id = res["data"][0]['id']
             d = requests.get(f"https://api.deezer.com/album/{alb_id}", timeout=5).json()
@@ -665,8 +667,30 @@ def fetch_deezer_metadata(artist, album):
             }
     except:
         pass
+
+    # 2. 일반 검색 시도 (트랙 단위 - 앨범이 없는 곡일 때 효과적)
+    try:
+        url = f"https://api.deezer.com/search?q={urllib.parse.quote(f'{artist} {album}')}&limit=1"
+        res = requests.get(url, timeout=5).json()
+        if res.get("data") and len(res["data"]) > 0:
+            alb = res["data"][0].get('album', {})
+            if alb.get('cover_xl'):
+                return {"poster": alb.get('cover_xl'), "album_artist": res["data"][0].get('artist', {}).get('name')}
+    except:
+        pass
     return None
 
+def fetch_maniadb_metadata(artist, album):
+    # 앨범으로 먼저 찾고, 없으면 곡(song)으로 한 번 더 찾습니다.
+    for mode in ['album', 'song']:
+        try:
+            url = f"http://www.maniadb.com/api/search/{urllib.parse.quote(f'{artist} {album}')}/?sr={mode}&display=1&key=example&v=0.5"
+            res = requests.get(url, timeout=8, headers={'User-Agent': 'Mozilla/5.0'})
+            if res.status_code == 200:
+                img = re.search(r'<image><!\[CDATA\[(.*?)]]>', res.text)
+                if img: return {"poster": img.group(1).replace("/s/", "/l/"), "genre": "K-Pop"}
+        except: continue
+    return None
 
 def start_metadata_update_thread(query_tag=None):
     global up_st
@@ -679,14 +703,11 @@ def start_metadata_update_thread(query_tag=None):
 
     try:
         with sqlite3.connect(DB_PATH, timeout=120) as conn:
-            # 쿼리 동적 생성
             sql = "SELECT artist, albumName, MAX(name) FROM global_songs WHERE (meta_poster IS NULL OR meta_poster = '' OR meta_poster = 'FAIL')"
             params = []
-
             if query_tag:
                 sql += " AND parent_path LIKE ?"
                 params.append(f"{query_tag}%")
-
             sql += " GROUP BY artist, albumName LIMIT 30000"
             targets = conn.execute(sql, params).fetchall()
 
@@ -695,6 +716,7 @@ def start_metadata_update_thread(query_tag=None):
             up_st["is_running"] = False
             return
 
+        # [수정] 에러를 유발하던 up_st.update(...) 바로 아래 로그 라인을 제거했습니다.
         up_st.update({"total": len(targets), "current": 0, "success": 0, "fail": 0})
         db_q = queue.Queue()
 
@@ -717,11 +739,8 @@ def start_metadata_update_thread(query_tag=None):
                             up_st["fail"] += 1
                         conn.commit()
                     db_q.task_done()
-                except queue.Empty:
-                    if not up_st["is_running"]: break
+                except:
                     continue
-                except Exception as e:
-                    print(f"[!] DB Error: {e}")
 
         Thread(target=db_worker, daemon=True).start()
 
@@ -734,34 +753,24 @@ def start_metadata_update_thread(query_tag=None):
                     try:
                         res = fetch_metadata_smart(a, b, t, folder_type=f_type)
                         db_q.put((a, b, res))
-
                         up_st["current"] += 1
                         icon = "✅ 성공" if res else "❌ 실패"
-                        progress = (up_st['current'] / up_st['total'] * 100)
-
-                        # 정제된 쿼리 확인용 로그
-                        q_art = clean_query_text(a, is_artist=True, folder_type=f_type)
-                        q_alb = clean_query_text(b, is_artist=False, folder_type=f_type)
-
-                        up_st[
-                            "last_log"] = f"[{display_name}] {up_st['current']}/{up_st['total']} | {a} - {b} -> {icon}"
-                        if up_st["current"] % 10 == 0:
-                            print(
-                                f"[*] [{progress:.1f}%] {up_st['current']}/{up_st['total']} | {q_art} - {q_alb} -> {icon}")
-                    except Exception as e:
-                        print(f"[!] Error: {a} - {e}")
+                        q_a = clean_query_text(a, is_artist=True)
+                        q_t = clean_query_text(t)
+                        up_st["last_log"] = f"[{display_name}] {q_a} - {q_t} -> {icon}"
+                    except:
+                        pass
 
                 futures.append(executor.submit(run_match))
-
             for future in as_completed(futures): pass
 
         db_q.put(None)
+        rebuild_library()
     except Exception as e:
         print(f"[!] Fatal: {e}")
     finally:
         up_st["is_running"] = False
-        print(f"[*] 🏁 [{display_name}] 엔진 종료 (성공: {up_st['success']})")
-
+        print(f"[*] 🏁 [{display_name}] 엔진 종료")
 
 @app.route('/api/admin/query', methods=['POST'])
 def run_query():
@@ -776,6 +785,11 @@ def run_query():
     except Exception as e:
         return jsonify({"error": str(e)})
 
+@app.route('/api/metadata/stop')
+def stop_meta():
+    global up_st
+    up_st["is_running"] = False
+    return jsonify({"status": "ok", "message": "엔진 중지 명령을 보냈습니다."})
 
 @app.route('/monitor')
 def render_monitor(): return render_template_string(MONITOR_HTML)
@@ -783,11 +797,6 @@ def render_monitor(): return render_template_string(MONITOR_HTML)
 
 @app.route('/api/indexing/status')
 def get_idx(): return jsonify(idx_st)
-
-
-@app.route('/api/metadata/status')
-def get_meta(): return jsonify(up_st)
-
 
 @app.route('/api/metadata/start')
 def start_meta():
@@ -826,13 +835,55 @@ def refresh():
 def reset_fail():
     try:
         with sqlite3.connect(DB_PATH) as conn:
-            # FAIL로 저장된 항목들을 초기화하여 다시 검색 대상으로 만듬
-            conn.execute("UPDATE global_songs SET meta_poster=NULL WHERE meta_poster='FAIL'")
+            # 'FAIL'이나 빈 문자열인 항목을 모두 NULL로 초기화 (노래 단위)
+            cursor = conn.execute(
+                "UPDATE global_songs SET meta_poster = NULL WHERE meta_poster = 'FAIL' OR meta_poster = ''")
+            count = cursor.rowcount
             conn.commit()
-        return jsonify({"status": "ok", "message": "실패 항목이 초기화되었습니다. 이제 다시 시도할 수 있습니다."})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
 
+        msg = f"🔄 {count:,}개 항목의 실패/미매칭 기록을 초기화했습니다."
+        up_st["last_log"] = msg
+        return jsonify({"status": "ok", "message": msg})
+    except Exception as e:
+        error_msg = f"❌ 초기화 중 오류: {str(e)}"
+        up_st["last_log"] = error_msg
+        return jsonify({"status": "error", "message": error_msg})
+
+
+@app.route('/api/metadata/status')
+def get_meta():
+    res = up_st.copy()
+    try:
+        with sqlite3.connect(DB_PATH, timeout=5) as conn:
+            # 앨범(그룹) 단위로 상태를 집계하여 대시보드에 표시
+            stats = conn.execute("""
+                SELECT
+                    COUNT(*),
+                    COUNT(CASE WHEN status = 'success' THEN 1 END),
+                    COUNT(CASE WHEN status = 'fail' THEN 1 END),
+                    COUNT(CASE WHEN status = 'pending' THEN 1 END)
+                FROM (
+                    SELECT
+                        CASE
+                            WHEN MAX(meta_poster) IS NOT NULL AND MAX(meta_poster) NOT IN ('', 'FAIL') THEN 'success'
+                            WHEN MAX(meta_poster) = 'FAIL' THEN 'fail'
+                            ELSE 'pending'
+                        END as status
+                    FROM global_songs
+                    GROUP BY artist, albumName
+                )
+            """).fetchone()
+
+            if stats:
+                res.update({
+                    "db_total": stats[0] or 0,
+                    "db_success": stats[1] or 0,
+                    "db_fail": stats[2] or 0,
+                    "db_pending": stats[3] or 0
+                })
+    except:
+        pass
+    return jsonify(res)
 
 @app.route('/stream/<path:fp>')
 def stream(fp): return send_from_directory(MUSIC_BASE, urllib.parse.unquote(fp))
