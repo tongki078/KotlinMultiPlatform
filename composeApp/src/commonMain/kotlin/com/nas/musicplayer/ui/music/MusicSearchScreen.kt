@@ -10,9 +10,6 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -266,17 +263,56 @@ fun ThemeSection(title: String, themes: List<Theme>, onNavigateToTheme: (Theme) 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun SongCardItem(song: Song, onClick: () -> Unit, onLongClick: () -> Unit) {
-    Column(modifier = Modifier.width(140.dp).combinedClickable(onClick = onClick, onLongClick = onLongClick), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(modifier = Modifier.size(140.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
-            AsyncImage(model = song.metaPoster ?: song.streamUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+fun SongCardItem(
+    song: Song, 
+    onClick: () -> Unit, 
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center
+        ) {
+            AsyncImage(
+                model = song.metaPoster ?: song.streamUrl, 
+                contentDescription = null, 
+                modifier = Modifier.fillMaxSize(), 
+                contentScale = ContentScale.Crop
+            )
             if (song.metaPoster == null) {
-                Icon(Icons.Default.MusicNote, null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
+                Icon(
+                    Icons.Default.MusicNote, 
+                    null, 
+                    modifier = Modifier.size(48.dp), 
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                )
             }
         }
         Spacer(modifier = Modifier.height(8.dp))
-        Text(text = song.name ?: "", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
-        Text(text = song.artist, style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
+        Text(
+            text = song.name ?: "", 
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), 
+            maxLines = 1, 
+            overflow = TextOverflow.Ellipsis, 
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.Center
+        )
+        Text(
+            text = song.artist, 
+            style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant), 
+            maxLines = 1, 
+            overflow = TextOverflow.Ellipsis, 
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.Center
+        )
     }
 }
 

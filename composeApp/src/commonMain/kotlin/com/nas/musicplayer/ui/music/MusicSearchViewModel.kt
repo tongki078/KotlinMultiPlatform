@@ -20,10 +20,15 @@ import io.ktor.http.appendPathSegments
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class Theme(val name: String, val path: String)
+data class Theme(
+    val name: String, 
+    val path: String,
+    @SerialName("image_url") val imageUrl: String? = null
+)
 
 @Serializable
 data class ThemeResponse(
