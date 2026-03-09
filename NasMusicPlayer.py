@@ -576,27 +576,36 @@ def clean_query_text(text, is_artist=False, folder_type=None):
     if not text or text == 'Unknown Artist': return ""
     s = text
 
-    # 1. 가수 이름 특화 정제 (가장 먼저 실행)
+    # 1단계: [가수 전용] 앨범 번호 제거 ("윤종신 2집" -> "윤종신")
     if is_artist:
-        # "윤종신 2집" -> "윤종신" / "다비치 1 5집" -> "다비치"
         s = re.sub(r'\s*\d+\.?\d*\s*집', '', s).strip()
-        # "LE SSERAFIM (르세라핌), j-hope" -> "LE SSERAFIM"
-        s = re.split(r'[,/&]|\(', s)[0].strip()
 
-    # 2. 괄호 및 날짜 제거
-    s = re.sub(r'\(.*?\)|\[.*?\]|\{.*?\}', ' ', s)
+    # 2단계: [공통] 연도 및 날짜 제거 ("2000 대한민국" -> "대한민국", "2024.01.01" 제거)
+    s = re.sub(r'^\d{4}\s+', ' ', s)
     s = re.sub(r'\d{2,4}\.\d{2}\.\d{2}', ' ', s)
 
-    # 3. 트랙 번호 제거 (10cm, 2PM 등 이름 보호)
+    # 3단계: [공통] 괄호 및 대괄호 내용 제거 (가수는 fetch_metadata_smart에서 미리 분리함)
+    s = re.sub(r'\(.*?\)|\[.*?\]|\{.*?\}', ' ', s)
+
+    # 4단계: [공통] 트랙 번호 제거 ("001. ", "01- " 등 제거하되 "10cm" 보호)
     s = re.sub(r'^\d{1,3}[\s\.\-_/]+', '', s.strip())
 
-    # 4. 기타 불필요한 키워드 제거
-    s = re.sub(r'(?i)\b(CD\s*\d+|Disc\s*\d+|FLAC|320K|HIDEL|Vol\.\s*\d+|Part\.\s*\d+)\b', ' ', s)
+    # 5단계: [앨범/제목 전용] 불필요한 음반 용어 제거
     if not is_artist:
         s = re.sub(r'(?i)\b(싱글|정규|베스트|미니앨범|EP|Album|Collection|TOP\s*100|차트)\b', ' ', s)
 
-    # 5. 최종 정리
-    s = re.sub(r'[^\w\s가-힣ぁ-んァ-ヶー一-龠]', ' ', s)
+    # 6단계: [추가] 클래식/오페라/기술 태그 제거 ("Act 2", "Op.12", "FLAC" 등)
+    keywords = [
+        'CD\s*\d+', 'Disc\s*\d+', 'Vol\.\s*\d+', 'Part\.\s*\d+', 'Ver\.\s*\d+',
+        'FLAC', '320K', 'HIDEL', 'Act\s*\d+', 'Scene\s*\d+', 'Op\.\s*\d+',
+        'No\.\s*\d+', 'BWV\s*\d+', 'K\.\s*\d+', 'Selection', 'And', '그리고'
+    ]
+    s = re.sub(r'(?i)\b(' + '|'.join(keywords) + r')\b', ' ', s)
+
+    # 7단계: [추가] 특수문자 정리 및 한자(大) 허용 (\u4e00-\u9fff 범위 추가)
+    s = re.sub(r'[^\w\s가-힣ぁ-んァ-ヶー一-龠\u4e00-\u9fff]', ' ', s)
+
+    # 8단계: [마무리] 다중 공백 제거
     return re.sub(r'\s+', ' ', s).strip()
 
 def fetch_metadata_smart(artist, album, title, folder_type=None):
@@ -703,7 +712,8 @@ def start_metadata_update_thread(query_tag=None):
 
     try:
         with sqlite3.connect(DB_PATH, timeout=120) as conn:
-            sql = "SELECT artist, albumName, MAX(name) FROM global_songs WHERE (meta_poster IS NULL OR meta_poster = '' OR meta_poster = 'FAIL')"
+            conn.row_factory = sqlite3.Row
+            sql = "SELECT artist, albumName, MAX(name) as title FROM global_songs WHERE (meta_poster IS NULL OR meta_poster = '' OR meta_poster = 'FAIL')"
             params = []
             if query_tag:
                 sql += " AND parent_path LIKE ?"
@@ -716,55 +726,72 @@ def start_metadata_update_thread(query_tag=None):
             up_st["is_running"] = False
             return
 
-        # [수정] 에러를 유발하던 up_st.update(...) 바로 아래 로그 라인을 제거했습니다.
         up_st.update({"total": len(targets), "current": 0, "success": 0, "fail": 0})
         db_q = queue.Queue()
 
+        # [최적화] DB 작업자: 100개씩 모아서 한 번에 커밋 (비약적인 속도 향상)
         def db_worker():
-            while up_st["is_running"] or not db_q.empty():
+            batch = []
+            while True:
                 try:
-                    item = db_q.get(timeout=2)
+                    item = db_q.get(timeout=3)
                     if item is None: break
-                    art, alb, res = item
-                    with sqlite3.connect(DB_PATH, timeout=60) as conn:
-                        if res and res.get('poster'):
-                            conn.execute(
-                                "UPDATE global_songs SET meta_poster=?, genre=?, release_date=?, album_artist=? WHERE artist=? AND albumName=?",
-                                (res['poster'], res.get('genre'), res.get('release_date'), res.get('album_artist'), art,
-                                 alb))
-                            up_st["success"] += 1
-                        else:
-                            conn.execute("UPDATE global_songs SET meta_poster='FAIL' WHERE artist=? AND albumName=?",
-                                         (art, alb))
-                            up_st["fail"] += 1
-                        conn.commit()
-                    db_q.task_done()
-                except:
-                    continue
+                    batch.append(item)
 
-        Thread(target=db_worker, daemon=True).start()
+                    if len(batch) >= 100:
+                        save_batch(batch)
+                        batch = []
+                    db_q.task_done()
+                except queue.Empty:
+                    if batch:
+                        save_batch(batch)
+                        batch = []
+                    if not up_st["is_running"]: break
+            if batch: save_batch(batch)
+
+        def save_batch(items):
+            with sqlite3.connect(DB_PATH, timeout=60) as conn:
+                for art, alb, res in items:
+                    if res and res.get('poster'):
+                        conn.execute(
+                            "UPDATE global_songs SET meta_poster=?, genre=?, release_date=?, album_artist=? WHERE artist=? AND albumName=?",
+                            (res['poster'], res.get('genre'), res.get('release_date'), res.get('album_artist'), art,
+                             alb))
+                        up_st["success"] += 1
+                    else:
+                        conn.execute("UPDATE global_songs SET meta_poster='FAIL' WHERE artist=? AND albumName=?",
+                                     (art, alb))
+                        up_st["fail"] += 1
+                conn.commit()
+
+        worker_thread = Thread(target=db_worker, daemon=True)
+        worker_thread.start()
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = []
-            for art, alb, tit in targets:
+            for row in targets:
                 if not up_st["is_running"]: break
 
-                def run_match(a=art, b=alb, t=tit, f_type=query_tag):
+                def run_match(r=row, f_type=query_tag):
                     try:
-                        res = fetch_metadata_smart(a, b, t, folder_type=f_type)
-                        db_q.put((a, b, res))
+                        res = fetch_metadata_smart(r['artist'], r['albumName'], r['title'], folder_type=f_type)
+                        db_q.put((r['artist'], r['albumName'], res))
+
                         up_st["current"] += 1
-                        icon = "✅ 성공" if res else "❌ 실패"
-                        q_a = clean_query_text(a, is_artist=True)
-                        q_t = clean_query_text(t)
-                        up_st["last_log"] = f"[{display_name}] {q_a} - {q_t} -> {icon}"
+                        icon = "✅" if res else "❌"
+                        q_a = clean_query_text(r['artist'], is_artist=True)
+                        up_st["last_log"] = f"[{display_name}] {up_st['current']}/{up_st['total']} | {q_a} -> {icon}"
                     except:
                         pass
 
                 futures.append(executor.submit(run_match))
+
             for future in as_completed(futures): pass
 
+        # [중요] 모든 매칭이 끝나면 큐가 비워질 때까지 대기
         db_q.put(None)
+        worker_thread.join()  # DB 저장이 완전히 끝날 때까지 엔진 종료를 유예합니다.
+
         rebuild_library()
     except Exception as e:
         print(f"[!] Fatal: {e}")

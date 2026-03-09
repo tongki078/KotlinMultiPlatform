@@ -99,8 +99,8 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
     }
 
     private fun generateMatchKey(artist: String, title: String): String {
-        val cleanArtist = artist.replace(Regex("[^a-zA-Z0-9가-힣ㄱ-ㅎㅏ-ㅣ]"), "").lowercase()
-        val cleanTitle = title.replace(Regex("[^a-zA-Z0-9가-힣ㄱ-ㅎㅏ-ㅣ]"), "").lowercase()
+        val cleanArtist = artist.replace(Regex("""[^a-zA-Z0-9가-힣ㄱ-ㅎㅏ-ㅣ]"""), "").lowercase()
+        val cleanTitle = title.replace(Regex("""[^a-zA-Z0-9가-힣ㄱ-ㅎㅏ-ㅣ]"""), "").lowercase()
         return "$cleanArtist-$cleanTitle"
     }
 
@@ -138,9 +138,14 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
                         appendPathSegments(theme.path.split("/"))
                     }
                 }.body<List<Song>>()
+
+                val songsWithId = songs.map {
+                    it.copy(id = (it.streamUrl ?: (it.name ?: "" + it.artist)).hashCode().toLong())
+                }
+
                 _uiState.update { it.copy(
-                    songs = songs, 
-                    isLoading = false 
+                    songs = songsWithId,
+                    isLoading = false
                 ) }
             } catch (e: Exception) {
                 println("Failed to load theme details: ${e.message}")
@@ -212,8 +217,8 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
 
     private fun cleanSongInfo(song: Song): Song {
         val fileName = song.name ?: ""
-        var cleanName = fileName.replace(Regex("\\.(mp3|flac|m4a|wav)$", RegexOption.IGNORE_CASE), "").trim()
-        cleanName = cleanName.replace(Regex("^\\d+[.\\-_\\s]+"), "").trim()
+        var cleanName = fileName.replace(Regex("""\.(mp3|flac|m4a|wav)$""", RegexOption.IGNORE_CASE), "").trim()
+        cleanName = cleanName.replace(Regex("""^\d+[.\-_\s]+"""), "").trim()
 
         val cleanedSong = if (cleanName.contains(" - ")) {
             val parts = cleanName.split(" - ", limit = 2)

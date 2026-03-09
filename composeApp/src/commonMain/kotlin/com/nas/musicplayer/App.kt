@@ -82,9 +82,9 @@ fun App(
                 val isFullScreen = route == "player" || route.startsWith("add_to_playlist")
                 
                 if (!isFullScreen) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding()) {
                         currentSong?.let { song ->
-                            Box(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                            Box(modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 16.dp)) {
                                 MiniPlayer(
                                     song = song,
                                     isPlaying = isPlaying,
@@ -117,7 +117,6 @@ fun App(
                             onDeleteSong = onDeleteSong,
                             downloadingSongIds = uiState.downloadingSongIds,
                             isVoiceSearching = isVoiceSearching,
-                            // 상단바에 보관함 버튼 추가를 위해 전달
                             onNavigateToLibrary = { 
                                 navController.navigate("library") {
                                     popUpTo(navController.graph.findStartDestination().route ?: "search") { saveState = true }
