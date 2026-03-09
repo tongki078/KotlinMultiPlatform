@@ -853,44 +853,54 @@ def get_details(tp):
 
 @app.route('/api/top100')
 def get_top100():
-    """DB 인덱싱 정보를 활용하여 가장 최신 주간의 TOP 100 리스트 반환"""
+    """DB 인덱싱 정보를 활용하여 가장 최신 주간의 TOP 100 리스트를 순서대로 반환"""
     try:
-        # 1. 멜론 주간 차트 기준 상대 경로 (예: '국내/차트/멜론 주간 차트')
         base_rel_path = os.path.relpath(WEEKLY_CHART_PATH, MUSIC_BASE).replace('\\', '/')
 
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
 
-            # 2. DB에서 해당 경로 하위의 가장 최신 'parent_path' 하나를 추출
-            # 문자열 내림차순 정렬 시 날짜가 가장 늦은 폴더가 상단에 옵니다.
+            # 1. DB에서 가장 최신 날짜의 폴더 경로 1개 찾기
             latest_folder_row = conn.execute(
                 "SELECT parent_path FROM global_songs WHERE parent_path LIKE ? ORDER BY parent_path DESC LIMIT 1",
                 (f"{base_rel_path}/%",)
             ).fetchone()
 
             if not latest_folder_row:
-                print(f"[*] Top100: DB에서 {base_rel_path} 하위 데이터를 찾을 수 없습니다.")
+                print(f"[*] Top100: DB에서 {base_rel_path} 하위 데이터를 찾을 수 없습니다. (스캔 필요)")
                 return jsonify([])
 
             latest_path = latest_folder_row['parent_path']
 
-            # 3. 추출된 최신 경로(parent_path)에 속한 곡들만 가져옴
+            # 2. 해당 폴더의 곡들 모두 가져오기
             rows = conn.execute(
                 """SELECT name, artist, albumName, stream_url, parent_path, meta_poster,
                           genre, release_date, album_artist, 0 as is_dir
                    FROM global_songs
-                   WHERE parent_path = ?
-                   ORDER BY name ASC""",
+                   WHERE parent_path = ?""",
                 (latest_path,)
             ).fetchall()
 
             result = [dict(r) for r in rows]
-            # 로그 출력으로 어떤 주간의 차트가 나가는지 확인 가능
-            print(f"[*] DB 조회 성공: {latest_path} ({len(result)}곡 발견)")
+
+            # 3. [개선] 순위 정렬 로직: 아티스트명이나 파일명 앞의 숫자를 추출하여 정렬
+            def get_rank(item):
+                # 1순위: 아티스트명 앞의 숫자 (예: "001 가수")
+                match = re.match(r'^(\d+)', item.get('artist', ''))
+                if match: return int(match.group(1))
+                # 2순위: 파일명(stream_url)의 마지막 부분에서 숫자 추출
+                url = urllib.parse.unquote(item.get('stream_url', ''))
+                filename = os.path.basename(url)
+                match = re.match(r'^(\d+)', filename)
+                return int(match.group(1)) if match else 999
+
+            result.sort(key=get_rank)
+
+            print(f"[*] 순위 정렬 완료: {latest_path} ({len(result)}곡)")
             return jsonify(result)
 
     except Exception as e:
-        print(f"[!] Top100 DB 조회 중 치명적 오류: {e}")
+        print(f"[!] Top100 오류: {e}")
         return jsonify([])
 
 
