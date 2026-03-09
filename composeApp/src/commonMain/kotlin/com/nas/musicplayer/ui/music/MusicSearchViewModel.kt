@@ -139,12 +139,10 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
                     }
                 }.body<List<Song>>()
 
-                val songsWithId = songs.map {
-                    it.copy(id = (it.streamUrl ?: (it.name ?: "" + it.artist)).hashCode().toLong())
-                }
+                val finalSongs = songs.map { cleanSongInfo(it) }
 
                 _uiState.update { it.copy(
-                    songs = songsWithId,
+                    songs = finalSongs,
                     isLoading = false
                 ) }
             } catch (e: Exception) {
@@ -159,15 +157,9 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
             _uiState.update { it.copy(isLoading = true, searchQuery = "", songs = emptyList()) }
             try {
                 val response = httpClient.get("$pythonBaseUrl/api/top100").body<List<Song>>()
-                val pythonWeeklySongs = response.map { 
-                    it.copy(id = (it.streamUrl ?: (it.name ?: "" + it.artist)).hashCode().toLong()) 
-                }
+                val pythonWeeklySongs = response.map { cleanSongInfo(it) }
                 
-                if (pythonWeeklySongs.isNotEmpty()) {
-                    _uiState.update { it.copy(songs = pythonWeeklySongs, isLoading = false) }
-                } else {
-                    _uiState.update { it.copy(isLoading = false) }
-                }
+                _uiState.update { it.copy(songs = pythonWeeklySongs, isLoading = false) }
             } catch (e: Exception) {
                 println("Top100 Load Error: ${e.message}")
                 _uiState.update { it.copy(isLoading = false) }
@@ -191,7 +183,7 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
             try {
                 val pythonResults = httpClient.get("$pythonBaseUrl/api/search") {
                     parameter("q", trimmedQuery)
-                }.body<List<Song>>().map { it.copy(id = (it.streamUrl ?: (it.name ?: "" + it.artist)).hashCode().toLong()) }
+                }.body<List<Song>>().map { cleanSongInfo(it) }
 
                 val networkResult = musicApiService.search(trimmedQuery).toSongList()
                     .filter { !it.isDir }
@@ -217,25 +209,23 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
 
     private fun cleanSongInfo(song: Song): Song {
         val fileName = song.name ?: ""
-        var cleanName = fileName.replace(Regex("""\.(mp3|flac|m4a|wav)$""", RegexOption.IGNORE_CASE), "").trim()
-        cleanName = cleanName.replace(Regex("""^\d+[.\-_\s]+"""), "").trim()
+        var cleanName = fileName.replace(Regex("""\.(mp3|flac|m4a|wav|dsf)$""", RegexOption.IGNORE_CASE), "").trim()
+        cleanName = cleanName.replace(Regex("""^\d+[\s\.\-_]+"""), "").trim()
 
         val cleanedSong = if (cleanName.contains(" - ")) {
             val parts = cleanName.split(" - ", limit = 2)
-            val artistPart = parts[0].trim()
-            val titlePart = parts[1].trim()
-            
             song.copy(
-                name = titlePart,
-                artist = artistPart,
-                albumName = song.albumName
+                name = parts[1].trim(),
+                artist = parts[0].trim(),
+                isDir = false
             )
         } else {
-            song.copy(name = cleanName)
+            song.copy(name = cleanName, isDir = false)
         }
 
         return if (cleanedSong.id == 0L) {
-            cleanedSong.copy(id = (cleanedSong.streamUrl ?: (cleanedSong.name ?: "" + cleanedSong.artist)).hashCode().toLong())
+            val uniqueKey = "${cleanedSong.artist}-${cleanedSong.name}-${cleanedSong.streamUrl}"
+            cleanedSong.copy(id = uniqueKey.hashCode().toLong())
         } else {
             cleanedSong
         }
