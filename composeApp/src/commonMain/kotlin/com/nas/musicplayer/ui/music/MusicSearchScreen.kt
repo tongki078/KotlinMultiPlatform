@@ -12,11 +12,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.*
@@ -57,6 +55,7 @@ fun MusicSearchScreen(
     onVoiceSearchClick: () -> Unit,
     onDownloadSong: (Song) -> Unit,
     onDeleteSong: (Song) -> Unit,
+    onNavigateToLibrary: () -> Unit,
     downloadingSongIds: Set<Long> = emptySet(),
     isVoiceSearching: Boolean = false,
     viewModel: MusicSearchViewModel,
@@ -92,7 +91,7 @@ fun MusicSearchScreen(
         modifier = Modifier.fillMaxSize().statusBarsPadding().padding(bottom = bottomPadding).imePadding()
             .pointerInput(Unit) { detectTapGestures(onTap = { focusManager.clearFocus() }) }
     ) {
-        // 검색바
+        // 검색바 + 상단 보관함 아이콘
         Row(
             modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -127,26 +126,24 @@ fun MusicSearchScreen(
             if (isSearchFocused) {
                 TextButton(onClick = { focusManager.clearFocus() }) { Text("취소", color = primaryColor) }
             } else {
-                IconButton(onClick = onNavigateToPlaylists) { Icon(Icons.AutoMirrored.Filled.PlaylistPlay, null, modifier = Modifier.size(32.dp), tint = primaryColor) }
+                IconButton(onClick = onNavigateToLibrary) { 
+                    Icon(Icons.Default.LibraryMusic, null, modifier = Modifier.size(28.dp), tint = primaryColor) 
+                }
             }
         }
 
         Box(modifier = Modifier.weight(1f)) {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
                 if (!isSearchFocused && uiState.searchQuery.isEmpty()) {
-                    // 1. 추천 차트
                     if (uiState.themes.isNotEmpty()) {
                         item { ThemeSection(title = "추천 차트", themes = uiState.themes, onNavigateToTheme = onNavigateToTheme) }
                     }
-                    // 2. 추천 모음
                     if (uiState.collectionThemes.isNotEmpty()) {
                         item { ThemeSection(title = "추천 모음", themes = uiState.collectionThemes, onNavigateToTheme = onNavigateToTheme) }
                     }
-                    // 3. 가수별 추천
                     if (uiState.artistThemes.isNotEmpty()) {
                         item { ThemeSection(title = "가수별 추천", themes = uiState.artistThemes, onNavigateToTheme = onNavigateToTheme) }
                     }
-                    // 4. 장르별 보기 (그리드)
                     if (uiState.genreThemes.isNotEmpty()) {
                         item {
                             GenreGridSection(genres = uiState.genreThemes, onGenreClick = onNavigateToTheme)
@@ -154,7 +151,6 @@ fun MusicSearchScreen(
                     }
                 }
 
-                // 5. 검색 결과 또는 주간 차트 리스트
                 items(uiState.songs, key = { it.id.toString() + it.name + it.artist }) { song ->
                     SongListItem(
                         song = song,
@@ -192,11 +188,11 @@ fun MusicSearchScreen(
 @Composable
 fun GenreGridSection(genres: List<Theme>, onGenreClick: (Theme) -> Unit) {
     val colors = listOf(
-        Pair(Color(0xFFE91E63), Color(0xFFFF80AB)), // 핑크
-        Pair(Color(0xFF9C27B0), Color(0xFFEA80FC)), // 퍼플
-        Pair(Color(0xFF2196F3), Color(0xFF82B1FF)), // 블루
-        Pair(Color(0xFF4CAF50), Color(0xFFB9F6CA)), // 그린
-        Pair(Color(0xFFFF9800), Color(0xFFFFE082))  // 오렌지
+        Pair(Color(0xFFE91E63), Color(0xFFFF80AB)),
+        Pair(Color(0xFF9C27B0), Color(0xFFEA80FC)),
+        Pair(Color(0xFF2196F3), Color(0xFF82B1FF)),
+        Pair(Color(0xFF4CAF50), Color(0xFFB9F6CA)),
+        Pair(Color(0xFFFF9800), Color(0xFFFFE082))
     )
 
     Column(modifier = Modifier.padding(vertical = 12.dp)) {
@@ -206,7 +202,6 @@ fun GenreGridSection(genres: List<Theme>, onGenreClick: (Theme) -> Unit) {
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
         )
         
-        // 고정 높이 그리드 (5개 항목이므로 3행 예상)
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
             genres.chunked(2).forEachIndexed { rowIndex, rowItems ->
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
@@ -271,34 +266,35 @@ fun SongCardItem(
 ) {
     Column(
         modifier = modifier
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .clip(RoundedCornerShape(12.dp))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
             modifier = Modifier
                 .aspectRatio(1f)
                 .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
+                .background(Color.Gray.copy(alpha = 0.1f)),
             contentAlignment = Alignment.Center
         ) {
+            val imageModel = remember(song.metaPoster) {
+                if (!song.metaPoster.isNullOrBlank() && song.metaPoster != "FAIL") {
+                    song.metaPoster
+                } else {
+                    null
+                }
+            }
             AsyncImage(
-                model = song.metaPoster ?: song.streamUrl, 
+                model = imageModel, 
                 contentDescription = null, 
                 modifier = Modifier.fillMaxSize(), 
                 contentScale = ContentScale.Crop
             )
-            if (song.metaPoster == null) {
-                Icon(
-                    Icons.Default.MusicNote, 
-                    null, 
-                    modifier = Modifier.size(48.dp), 
-                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-                )
-            }
         }
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(10.dp))
         Text(
-            text = song.name ?: "", 
+            text = song.name ?: "제목 없음", 
             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), 
             maxLines = 1, 
             overflow = TextOverflow.Ellipsis, 
@@ -307,7 +303,9 @@ fun SongCardItem(
         )
         Text(
             text = song.artist, 
-            style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant), 
+            style = MaterialTheme.typography.bodySmall.copy(
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+            ), 
             maxLines = 1, 
             overflow = TextOverflow.Ellipsis, 
             modifier = Modifier.fillMaxWidth(),
@@ -318,12 +316,32 @@ fun SongCardItem(
 
 @Composable
 fun ThemeItem(theme: Theme, onClick: () -> Unit) {
-    Column(modifier = Modifier.width(120.dp).clickable { onClick() }, horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(modifier = Modifier.size(120.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.MusicNote, null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
+    Column(
+        modifier = Modifier.width(110.dp).clickable { onClick() },
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(110.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.Gray.copy(alpha = 0.1f)),
+            contentAlignment = Alignment.Center
+        ) {
+            AsyncImage(
+                model = theme.imageUrl ?: "", 
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
         }
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(text = theme.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium), maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = theme.name,
+            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center
+        )
     }
 }
 

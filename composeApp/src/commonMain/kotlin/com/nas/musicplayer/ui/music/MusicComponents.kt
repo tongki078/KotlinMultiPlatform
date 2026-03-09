@@ -2,6 +2,7 @@ package com.nas.musicplayer.ui.music
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -14,7 +15,6 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,7 +22,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -52,7 +51,6 @@ fun SongListItem(
             modifier = Modifier.fillMaxWidth().padding(16.dp, 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // [수정] 앨범 아트 주소가 유효한 HTTP URL일 때만 로드하도록 개선
             val imageModel = remember(song.metaPoster) {
                 if (song.metaPoster != null && song.metaPoster != "FAIL" && song.metaPoster.startsWith("http")) {
                     song.metaPoster
@@ -64,9 +62,8 @@ fun SongListItem(
             AsyncImage(
                 model = imageModel,
                 contentDescription = null,
-                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)),
-                contentScale = ContentScale.Crop,
-                error = rememberVectorPainter(Icons.Default.MusicNote)
+                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)).background(Color.Gray.copy(alpha = 0.1f)),
+                contentScale = ContentScale.Crop
             )
             
             Spacer(modifier = Modifier.width(16.dp))
@@ -136,9 +133,8 @@ fun MoreOptionsSheet(
                 AsyncImage(
                     model = imageModel, 
                     contentDescription = null, 
-                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)), 
-                    contentScale = ContentScale.Crop,
-                    error = rememberVectorPainter(Icons.Default.MusicNote)
+                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)).background(Color.Gray.copy(alpha = 0.1f)), 
+                    contentScale = ContentScale.Crop
                 ) 
             },
             colors = ListItemDefaults.colors(containerColor = Color.Transparent)

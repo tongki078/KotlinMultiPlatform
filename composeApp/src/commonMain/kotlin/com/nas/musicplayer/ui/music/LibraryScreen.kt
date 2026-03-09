@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -30,36 +31,40 @@ fun LibraryScreen(
     onNavigateToPlaylists: () -> Unit,
     onNavigateToArtist: (Artist) -> Unit,
     onNavigateToAlbum: (Album) -> Unit,
-    onNavigateToDownloadedSongs: () -> Unit, // 다운로드된 음악 화면 이동 추가
+    onNavigateToDownloadedSongs: () -> Unit,
     onDownloadSong: (Song) -> Unit,
     onDeleteSong: (Song) -> Unit,
-    downloadingSongIds: Set<Long> = emptySet()
+    downloadingSongIds: Set<Long> = emptySet(),
+    onBack: () -> Unit // 추가
 ) {
     val sheetState = rememberModalBottomSheetState()
     val scope = rememberCoroutineScope()
     var selectedSongForSheet by remember { mutableStateOf<Song?>(null) }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            TopAppBar(
+                title = { Text("보관함", fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                )
+            )
+        }
     ) { padding ->
         LazyColumn(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 0.dp),
+                .fillMaxSize(),
             contentPadding = PaddingValues(
-                top = padding.calculateTopPadding() + 16.dp, 
+                top = padding.calculateTopPadding(), 
                 bottom = 16.dp
             )
         ) {
-            item {
-                Text(
-                    text = "보관함",
-                    fontSize = 34.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(start = 16.dp, bottom = 12.dp)
-                )
-            }
-
             item {
                 Column {
                     LibraryMenuItem("플레이리스트", Icons.Default.QueueMusic, onClick = onNavigateToPlaylists)

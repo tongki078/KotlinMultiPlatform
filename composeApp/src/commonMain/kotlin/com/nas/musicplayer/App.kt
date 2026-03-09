@@ -9,8 +9,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -21,7 +19,6 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.nas.musicplayer.ui.music.*
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -97,39 +94,6 @@ fun App(
                                 )
                             }
                         }
-                        
-                        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                        
-                        NavigationBar(
-                            containerColor = MaterialTheme.colorScheme.surface,
-                            tonalElevation = 0.dp
-                        ) {
-                            NavigationBarItem(
-                                selected = currentRoute == "search" || currentRoute?.startsWith("theme_detail") == true,
-                                onClick = { 
-                                    navController.navigate("search") {
-                                        popUpTo(navController.graph.findStartDestination().route ?: "search") { saveState = true }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
-                                },
-                                icon = { Icon(Icons.Default.Search, null, modifier = Modifier.size(26.dp)) },
-                                label = { Text("검색", fontSize = 12.sp) }
-                            )
-                            
-                            NavigationBarItem(
-                                selected = currentRoute == "library" || currentRoute?.startsWith("playlist_detail") == true || currentRoute?.startsWith("album_detail") == true || currentRoute?.startsWith("artist_detail") == true,
-                                onClick = { 
-                                    navController.navigate("library") {
-                                        popUpTo(navController.graph.findStartDestination().route ?: "search") { saveState = true }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
-                                },
-                                icon = { Icon(Icons.Default.LibraryMusic, null, modifier = Modifier.size(26.dp)) },
-                                label = { Text("보관함", fontSize = 12.sp) }
-                            )
-                        }
                     }
                 }
             }
@@ -152,7 +116,15 @@ fun App(
                             onDownloadSong = onDownloadSong,
                             onDeleteSong = onDeleteSong,
                             downloadingSongIds = uiState.downloadingSongIds,
-                            isVoiceSearching = isVoiceSearching
+                            isVoiceSearching = isVoiceSearching,
+                            // 상단바에 보관함 버튼 추가를 위해 전달
+                            onNavigateToLibrary = { 
+                                navController.navigate("library") {
+                                    popUpTo(navController.graph.findStartDestination().route ?: "search") { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            }
                         )
                     }
                     composable("theme_detail/{themeName}") { backStackEntry ->
@@ -176,7 +148,8 @@ fun App(
                             onNavigateToDownloadedSongs = { navController.navigate("downloaded_songs") },
                             onDownloadSong = onDownloadSong,
                             onDeleteSong = onDeleteSong,
-                            downloadingSongIds = uiState.downloadingSongIds
+                            downloadingSongIds = uiState.downloadingSongIds,
+                            onBack = { navController.popBackStack() }
                         )
                     }
                     composable("downloaded_songs") {
