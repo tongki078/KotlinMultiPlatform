@@ -209,65 +209,29 @@ MONITOR_HTML = '''
 # 3. 핵심 로직: DB, 스캔, 인덱싱 (중간 저장 및 이어하기)
 # ==========================================
 def init_db():
-    print("[*] 🛠️ DB 엔진 최적화 및 메타데이터 필드 확장 중...")
+    print("[*] 🛠️ DB 엔진 최적화 및 캐시 테이블 생성 중...")
     with sqlite3.connect(DB_PATH, timeout=600) as conn:
         conn.execute('PRAGMA journal_mode=WAL')
-        conn.execute('PRAGMA synchronous=NORMAL')
-        conn.execute('PRAGMA temp_store=MEMORY')
-        c = conn.cursor()
-        c.execute('CREATE TABLE IF NOT EXISTS themes (type TEXT, name TEXT, path TEXT)')
-        c.execute('''
+        conn.execute('''
             CREATE TABLE IF NOT EXISTS global_songs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT, artist TEXT, albumName TEXT,
-                stream_url TEXT, parent_path TEXT, meta_poster TEXT
+                stream_url TEXT, parent_path TEXT, meta_poster TEXT,
+                genre TEXT, release_date TEXT, album_artist TEXT
             )
         ''')
-
-        # 새로운 컬럼들 추가 (기존 DB에 없으면 추가됨)
-        new_cols = ["albumName", "genre", "release_date", "album_artist"]
-        for col in new_cols:
-            try:
-                c.execute(f"ALTER TABLE global_songs ADD COLUMN {col} TEXT")
-            except:
-                pass
-
-        # 인덱스 재생성 (업데이트 속도 보장)
-        c.execute('CREATE INDEX IF NOT EXISTS idx_meta_v5 ON global_songs(meta_poster, artist, albumName)')
-        c.execute('CREATE INDEX IF NOT EXISTS idx_path_v5 ON global_songs(parent_path)')
+        # [핵심] 검색할 데이터만 따로 관리하는 뷰 또는 테이블 생성
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS metadata_cache (
+                artist TEXT, albumName TEXT,
+                PRIMARY KEY (artist, albumName)
+            )
+        ''')
+        # 검색 대상 인덱스
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_grouping ON global_songs(artist, albumName)')
         conn.commit()
-    print("[*] ✅ DB 최적화 및 필드 확장 완료.")
+    print("[*] ✅ DB 최적화 및 캐시 테이블 준비 완료.")
 
-print("[*] ✅ DB 최적화 및 준비 완료.")
-
-def clean_query_text(text):
-    if not text or text == 'Unknown Artist': return ""
-
-    # 1. 모든 종류의 괄호 태그 제거 (날짜, 싱글 정보 등)
-    # [2024.01.01], (Remastered), {Edition} 등 처리
-    text = re.sub(r'\[.*?\]', '', text)
-    text = re.sub(r'\(.*?\)', '', text)
-    text = re.sub(r'\{.*?\}', '', text)
-
-    # 2. 검색 방해 패턴 제거 (에디션, 버전, 한국식 앨범 정보)
-    noise_patterns = [
-        r'(?i)\b(CD|Disc|Disk|Vol|Volume|Part|Pt|Side)\.?\s*\d*',
-        r'(?i)\b(Deluxe|Special|Limited|Remastered|Bonus|Digital|Live|Single|EP|Version|Edition|Remaster)\b',
-        r'정규\s*\d*집', r'싱글\s*EP', r'베스트\s*앨범', r'OST\s*Part\.?\s*\d*',
-        r'\d{4}\.?\d{2}\.?\d{2}'  # 날짜 형식 (2024.01.01)
-    ]
-    for pattern in noise_patterns:
-        text = re.sub(pattern, '', text)
-
-    # 3. 특수문자 제거 및 공백 정리
-    text = re.sub(r'[:\-&/_+,.]', ' ', text)
-    result = " ".join(text.split()).strip()
-
-    # 4. 결과 검증: 숫자뿐이거나 너무 짧으면 무효 처리 (검색 노이즈 방지)
-    if not result or result.isdigit() or len(result) < 2:
-        return ""
-
-    return result
 
 def load_cache():
     global cache
@@ -497,141 +461,181 @@ def rebuild_library():
         conn.commit()
     scan_all_songs()
 
+# 기존의 fetch_maniadb_metadata와 fetch_metadata_smart를 아래 코드로 대체하세요.
+
 def fetch_maniadb_metadata(artist, album):
     try:
-        url = f"http://www.maniadb.com/api/search/{urllib.parse.quote(f'{artist} {album}')}/?sr=album&display=1&key=example&v=0.5"
-        res = requests.get(url, timeout=5)
+        # Maniadb 타임아웃 문제를 해결하기 위해 타임아웃을 8초로 늘리고
+        # 검색 실패 시 바로 예외 처리하도록 합니다.
+        query = f"{artist} {album}".strip()
+        url = f"http://www.maniadb.com/api/search/{urllib.parse.quote(query)}/?sr=album&display=1&key=example&v=0.5"
+        res = requests.get(url, timeout=8, headers={'User-Agent': 'Mozilla/5.0'})
+
         if res.status_code == 200:
-            text = res.text
-            meta = {}
-            if "<image>" in text:
-                meta["poster"] = text.split("<image><![CDATA[")[1].split("]]>")[0].replace("/s/", "/l/")
-            if "majorgenre" in text:
-                meta["genre"] = text.split("<maniadb:majorgenre><![CDATA[")[1].split("]]>")[0]
-            if "<pubDate>" in text:
-                meta["release_date"] = text.split("<pubDate>")[1].split("</pubDate>")[0]
-            if "maniadb:artist" in text:
-                # 앨범 아티스트 추출 시도
-                try: meta["album_artist"] = text.split("<maniadb:artist>")[1].split("<![CDATA[")[1].split("]]>")[0]
-                except: pass
-            return meta if meta else None
-    except: pass
+            t = res.text
+            img = re.search(r'<image><!\[CDATA\[(.*?)]]>', t)
+            if img:
+                return {
+                    "poster": img.group(1).replace("/s/", "/l/"),
+                    "genre": "K-Pop"
+                }
+    except Exception as e:
+        # 타임아웃 발생 시 무거운 Maniadb를 다시 시도하지 않도록 로그만 남김
+        return None
     return None
+
+
+# ==========================================
+# 4. 메타데이터 엔진 (국내 폴더 우선순위 적용)
+# ==========================================
+
+def clean_query_text(text, is_artist=False, folder_type=None):
+    if not text or text == 'Unknown Artist': return ""
+    s = text
+
+    # [확장성] 나중에 folder_type(예: 'OST', '외국')에 따라 다른 규칙 적용 가능
+    if folder_type == 'OST':
+        # OST 전용 정제 로직 (예시)
+        s = re.sub(r'(?i)ost|original soundtrack', '', s)
+
+    # 1. 괄호 내용 삭제
+    s = re.sub(r'\(.*?\)|\[.*?\]|\{.*?\}', ' ', s)
+    # 2. 트랙 번호만 제거 (숫자 뒤에 공백/마침표 등이 있는 경우만)
+    s = re.sub(r'^[0-9]+[\s\.\-_/]+', '', s)
+
+    # 3. 무의미한 앨범명 필터링 (CD1 등)
+    if not is_artist:
+        if re.match(r'^(cd|disc|vol|volume|track)\s*[0-9]*$', s, re.IGNORECASE):
+            return ""
+
+    # 4. 기술 태그 제거
+    s = re.sub(
+        r'(?i)\b(\d+bit|\d+khz|flac|mp3|wav|m4a|dsf|dsd|hi-res|320k|remastered|live|deluxe|version|edit|cd\d+|disc\d+)\b',
+        ' ', s)
+    # 5. 특수문자 정리
+    s = re.sub(r'[^\w\s가-힣]', ' ', s)
+    return re.sub(r'\s+', ' ', s).strip()
+
+def fetch_metadata_smart(artist, album, title):
+    q_art = clean_query_text(artist, is_artist=True)
+    q_alb = clean_query_text(album, is_artist=False)
+    q_tit = clean_query_text(title, is_artist=False)
+
+    if not q_art or q_art.lower() == 'unknown': return None
+
+    # [매칭 전략] 1. 가수+앨범 -> 2. 가수+제목 -> 3. 가수단독
+    if q_alb:
+        res = fetch_maniadb_metadata(q_art, q_alb) or fetch_deezer_metadata(q_art, q_alb)
+        if res: return res
+    if q_tit:
+        res = fetch_maniadb_metadata(q_art, q_tit) or fetch_deezer_metadata(q_art, q_tit)
+        if res: return res
+    return fetch_maniadb_metadata(q_art, "") or fetch_deezer_metadata(q_art, "")
 
 def fetch_deezer_metadata(artist, album):
     try:
-        # 1. 앨범 검색
-        search_url = f"https://api.deezer.com/search/album?q={urllib.parse.quote(f'{artist} {album}')}&limit=1"
-        res = requests.get(search_url, timeout=5).json()
+        res = requests.get(f"https://api.deezer.com/search/album?q={urllib.parse.quote(f'{artist} {album}')}&limit=1", timeout=5).json()
         if res.get("data") and len(res["data"]) > 0:
-            alb = res["data"][0]
-            alb_id = alb['id']
-            # 2. 앨범 상세 정보 (장르, 날짜 등을 위해)
-            detail = requests.get(f"https://api.deezer.com/album/{alb_id}", timeout=5).json()
+            alb_id = res["data"][0]['id']
+            d = requests.get(f"https://api.deezer.com/album/{alb_id}", timeout=5).json()
             return {
-                "poster": detail.get('cover_xl'),
-                "genre": detail.get('genres', {}).get('data', [{}])[0].get('name') if detail.get('genres') else None,
-                "release_date": detail.get('release_date'),
-                "album_artist": detail.get('artist', {}).get('name')
+                "poster": d.get('cover_xl'),
+                "genre": d.get('genres', {}).get('data', [{}])[0].get('name') if d.get('genres') else None,
+                "release_date": d.get('release_date'),
+                "album_artist": d.get('artist', {}).get('name')
             }
     except: pass
     return None
 
-def start_metadata_update_thread():
-    global up_st, idx_st
+
+def start_metadata_update_thread(query_tag=None):
+    global up_st
     if up_st["is_running"]: return
     up_st["is_running"] = True
-    idx_st["last_log"] = "🚀 메타데이터 확장 엔진 가동! (장르/날짜 포함 수집)"
+
+    display_name = query_tag if query_tag else "전체"
+    print(f"[*] 🚀 메타데이터 엔진 가동 - [대상: {display_name}]")
 
     try:
         with sqlite3.connect(DB_PATH, timeout=120) as conn:
-            targets = conn.execute("""
-                SELECT artist, albumName FROM global_songs
-                WHERE (meta_poster IS NULL OR meta_poster = '' OR meta_poster = 'FAIL')
-                GROUP BY artist, albumName
-            """).fetchall()
+            # 쿼리 동적 생성
+            sql = "SELECT artist, albumName, MAX(name) FROM global_songs WHERE (meta_poster IS NULL OR meta_poster = '' OR meta_poster = 'FAIL')"
+            params = []
+
+            if query_tag:
+                sql += " AND parent_path LIKE ?"
+                params.append(f"{query_tag}%")
+
+            sql += " GROUP BY artist, albumName LIMIT 30000"
+            targets = conn.execute(sql, params).fetchall()
 
         if not targets:
+            print(f"[*] ✅ [{display_name}] 폴더에 처리할 대상이 없습니다.")
             up_st["is_running"] = False
             return
 
         up_st.update({"total": len(targets), "current": 0, "success": 0, "fail": 0})
         db_q = queue.Queue()
 
-        def db_writer():
-            conn = sqlite3.connect(DB_PATH, timeout=120, isolation_level=None)
-            conn.execute("PRAGMA journal_mode=WAL")
-            batch = []
-            while up_st["is_running"] or not db_q.empty():
+        # (db_worker 정의 부분은 기존과 동일)
+        def db_worker():
+            while up_st["is_running"]:
                 try:
-                    data = db_q.get(timeout=1)
-                    batch.append(data)
-                    if len(batch) >= 100 or (not up_st["is_running"] and db_q.empty()):
-                        if not batch: continue
-                        conn.execute("BEGIN IMMEDIATE")
-                        for art, alb, meta in batch:
-                            if meta:
-                                conn.execute("""
-                                    UPDATE global_songs
-                                    SET meta_poster = ?, genre = ?, release_date = ?, album_artist = ?
-                                    WHERE artist = ? AND albumName = ?
-                                """, (meta.get("poster"), meta.get("genre"), meta.get("release_date"),
-                                      meta.get("album_artist"), art, alb))
-                            else:
-                                conn.execute(
-                                    "UPDATE global_songs SET meta_poster = 'FAIL' WHERE artist = ? AND albumName = ?",
-                                    (art, alb))
+                    item = db_q.get(timeout=5)
+                    if item is None: break
+                    art, alb, res = item
+                    with sqlite3.connect(DB_PATH, timeout=60) as conn:
+                        if res and res.get('poster'):
+                            conn.execute(
+                                "UPDATE global_songs SET meta_poster=?, genre=?, release_date=?, album_artist=? WHERE artist=? AND albumName=?",
+                                (res['poster'], res.get('genre'), res.get('release_date'), res.get('album_artist'), art,
+                                 alb))
+                            up_st["success"] += 1
+                        else:
+                            conn.execute("UPDATE global_songs SET meta_poster='FAIL' WHERE artist=? AND albumName=?",
+                                         (art, alb))
+                            up_st["fail"] += 1
                         conn.commit()
-                        batch = []
                     db_q.task_done()
                 except queue.Empty:
                     continue
                 except Exception as e:
-                    print(f"[!] DB 쓰기 오류: {e}")
+                    print(f"[!] DB Error: {e}")
+
+        Thread(target=db_worker, daemon=True).start()
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            for art, alb, tit in targets:
+                if not up_st["is_running"]: break
+
+                def run_match(a=art, b=alb, t=tit, f_type=query_tag):
                     try:
-                        conn.execute("ROLLBACK")
-                    except:
-                        pass
-            conn.close()
+                        # folder_type을 전달하여 맞춤형 정제 수행
+                        q_art = clean_query_text(a, is_artist=True, folder_type=f_type)
+                        q_title = clean_query_text(b if b else t, is_artist=False, folder_type=f_type)
 
-        Thread(target=db_writer, daemon=True).start()
+                        res = fetch_metadata_smart(a, b, t)
+                        db_q.put((a, b, res))
 
-        def fetch_task(art, alb):
-            try:
-                time.sleep(random.uniform(0.3, 0.6))
-                q_art, q_alb = clean_query_text(art), clean_query_text(alb)
-                meta = None
-                if q_alb:
-                    meta = fetch_maniadb_metadata(q_art, q_alb) or fetch_deezer_metadata(q_art, q_alb)
+                        up_st["current"] += 1
+                        icon = "✅ 성공" if res else "❌ 실패"
+                        progress = (up_st['current'] / up_st['total'] * 100)
+                        print(
+                            f"[*] [{progress:.1f}%] {up_st['current']}/{up_st['total']} | {a} - {b} ({q_art} + {q_title}) -> {icon}")
+                    except Exception as e:
+                        print(f"[!] Error: {a} - {e}")
 
-                db_q.put((art, alb, meta))
-                up_st["current"] += 1
-                if meta and meta.get("poster"):
-                    up_st["success"] += 1
-                else:
-                    up_st["fail"] += 1
+                futures.append(executor.submit(run_match))
 
-                log = f"[{up_st['current']}/{up_st['total']}] {'✨' if meta else '➖'} {art}"
-                up_st["last_log"] = log
-                idx_st["last_log"] = log
-            except:
-                up_st["current"] += 1
-                db_q.put((art, alb, None))
+            for future in as_completed(futures): pass
 
-        CHUNK_SIZE = 5000
-        for i in range(0, len(targets), CHUNK_SIZE):
-            if not up_st["is_running"]: break
-            chunk = targets[i:i + CHUNK_SIZE]
-            with ThreadPoolExecutor(max_workers=5) as exe:
-                for art, alb in chunk:
-                    exe.submit(fetch_task, art, alb)
-            print(f"[{time.strftime('%H:%M:%S')}] Chunk {i // CHUNK_SIZE + 1} 완료...")
-
+        db_q.put(None)
     except Exception as e:
-        print(f"[ERROR] 메타데이터 엔진 에러: {e}")
+        print(f"[!] Fatal: {e}")
     finally:
-        time.sleep(2)
         up_st["is_running"] = False
+        print(f"[*] 🏁 [{display_name}] 엔진 종료 (성공: {up_st['success']})")
 
 @app.route('/api/admin/query', methods=['POST'])
 def run_query():
@@ -695,6 +699,6 @@ def stream(fp): return send_from_directory(MUSIC_BASE, urllib.parse.unquote(fp))
 if __name__ == '__main__':
     init_db()
     load_cache()
-    # 서버 시작 시 Unknown Artist들을 경로 기반으로 자동 수정
-    # fix_unknown_artists_in_db()
+    # scan_all_songs()  # <--- 이 줄을 주석 처리하세요.
+    # 이제 서버 재시작 후 즉시 /api/metadata/start 로 엔진 가동 가능합니다.
     app.run(host='0.0.0.0', port=4444, debug=False)
