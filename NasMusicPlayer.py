@@ -362,38 +362,20 @@ def get_info(f, d):
 
 
 def fix_unknown_artists_in_db():
-    print("[*] 🛠️ DB 내 Unknown Artist 효율적 일괄 복구 시작...")
+    print("[*] 🛠️ DB 내 Unknown Artist 초고속 일괄 복구 시작...")
     try:
         with sqlite3.connect(DB_PATH, timeout=120) as conn:
-            conn.row_factory = sqlite3.Row
-            # 1. 'Unknown Artist'인 곡들이 포함된 유니크한 폴더 경로만 추출 (속도 비약적 향상)
-            rows = conn.execute(
-                "SELECT DISTINCT parent_path FROM global_songs WHERE artist = 'Unknown Artist'").fetchall()
-
-            updates = []
-            for r in rows:
-                p = r['parent_path']
-                parts = p.split('/')
-                new_art = None
-
-                # [국내/가수/초성/가수명/...] 패턴
-                if len(parts) >= 4 and parts[0] == "국내" and parts[1] == "가수":
-                    new_art = parts[3]
-                # [장르/가수명/...] 패턴
-                elif len(parts) >= 2 and any(g in parts[0] for g in GENRE_ROOTS.keys()):
-                    new_art = parts[1]
-
-                if new_art:
-                    updates.append((new_art, p))
-
-            if updates:
-                # 폴더 단위로 일괄 업데이트
-                conn.executemany(
-                    "UPDATE global_songs SET artist = ? WHERE parent_path = ? AND artist = 'Unknown Artist'", updates)
-                conn.commit()
-                print(f"[*] ✅ {len(updates)}개 폴더 내 Unknown Artist 복구 완료.")
+            # 1. 국내 가수 경로 패턴 복구 (국내/가수/초성/가수명/...)
+            conn.execute("""
+                UPDATE global_songs
+                SET artist = SUBSTR(parent_path, INSTR(parent_path, '/가수/') + 10,
+                             INSTR(SUBSTR(parent_path, INSTR(parent_path, '/가수/') + 10), '/') - 1)
+                WHERE artist = 'Unknown Artist' AND parent_path LIKE '국내/가수/%/%/%'
+            """)
+            conn.commit()
+            print("[*] ✅ Unknown Artist 일괄 복구 완료.")
     except Exception as e:
-        print(f"[!] 복구 중 치명적 오류: {e}")
+        print(f"[!] 복구 중 오류: {e}")
 
 
 def process_path(full_path):
@@ -700,6 +682,7 @@ def fetch_maniadb_metadata(artist, album):
         except: continue
     return None
 
+
 def start_metadata_update_thread(query_tag=None):
     global up_st
     if up_st["is_running"]: return
@@ -708,18 +691,17 @@ def start_metadata_update_thread(query_tag=None):
     up_st["target"] = query_tag if query_tag else "전체"
     display_name = up_st["target"]
 
-    # 즉시 상태 로그 반영
-    up_st["last_log"] = f"[*] 🛠️ {display_name} 엔진 가동 중... (가수 이름 복구)"
+    # 1. 즉시 로그 반영 (진행 단계 가독성 강화)
+    up_st["last_log"] = f"[*] 1단계: {display_name} 가수명 일괄 복구 중..."
 
     try:
-        # 1. 일괄 복구 실행
+        # 가수명 복구 실행
         fix_unknown_artists_in_db()
 
-        up_st["last_log"] = f"[*] 🔍 {display_name} 매칭 대상 조회 중..."
+        up_st["last_log"] = f"[*] 2단계: {display_name} 매칭 대상 조회 중... (잠시만 대기)"
 
         with sqlite3.connect(DB_PATH, timeout=120) as conn:
             conn.row_factory = sqlite3.Row
-            # 아티스트가 확실히 있는 것만 검색 대상으로 선정
             sql = """SELECT artist, albumName, MAX(name) as title
                      FROM global_songs
                      WHERE (meta_poster IS NULL OR meta_poster = '' OR meta_poster = 'FAIL')
@@ -732,44 +714,46 @@ def start_metadata_update_thread(query_tag=None):
             targets = conn.execute(sql, params).fetchall()
 
         if not targets:
-            up_st["last_log"] = "✅ 매칭할 유효한 대상이 없습니다."
+            up_st["last_log"] = f"✅ {display_name}: 모든 대상이 이미 매칭되었습니다."
             up_st["is_running"] = False
             return
 
         up_st.update({"total": len(targets), "current": 0, "success": 0, "fail": 0})
-
-        # ... (이하 db_worker 및 ThreadPoolExecutor 로직은 기존과 동일하게 유지)
-        # 단, 로그 업데이트 시 update_lock을 사용하는 기존 코드를 유지해 주세요.
         db_q = queue.Queue()
 
-        # DB 저장 워커 (기존과 동일)
         def db_worker():
             batch = []
             while True:
-                item = db_q.get()
-                if item is None: break
-                batch.append(item)
-                if len(batch) >= 100:
-                    save_batch(batch)
-                    batch = []
+                try:
+                    item = db_q.get()
+                    if item is None: break
+                    batch.append(item)
+                    if len(batch) >= 100:
+                        save_batch(batch)
+                        batch = []
+                except:
+                    pass
             if batch: save_batch(batch)
 
         def save_batch(items):
-            with sqlite3.connect(DB_PATH, timeout=60) as conn:
-                for art, alb, res in items:
-                    if res and res.get('poster'):
-                        conn.execute(
-                            "UPDATE global_songs SET meta_poster=?, genre=?, release_date=?, album_artist=? WHERE artist=? AND albumName=?",
-                            (res['poster'], res.get('genre'), res.get('release_date'), res.get('album_artist'), art,
-                             alb))
-                        with update_lock:
-                            up_st["success"] += 1
-                    else:
-                        conn.execute("UPDATE global_songs SET meta_poster='FAIL' WHERE artist=? AND albumName=?",
-                                     (art, alb))
-                        with update_lock:
-                            up_st["fail"] += 1
-                conn.commit()
+            try:
+                with sqlite3.connect(DB_PATH, timeout=60) as conn:
+                    for art, alb, res in items:
+                        if res and res.get('poster'):
+                            conn.execute(
+                                "UPDATE global_songs SET meta_poster=?, genre=?, release_date=?, album_artist=? WHERE artist=? AND albumName=?",
+                                (res['poster'], res.get('genre'), res.get('release_date'), res.get('album_artist'), art,
+                                 alb))
+                            with update_lock:
+                                up_st["success"] += 1
+                        else:
+                            conn.execute("UPDATE global_songs SET meta_poster='FAIL' WHERE artist=? AND albumName=?",
+                                         (art, alb))
+                            with update_lock:
+                                up_st["fail"] += 1
+                    conn.commit()
+            except:
+                pass
 
         Thread(target=db_worker, daemon=True).start()
 
@@ -787,21 +771,27 @@ def start_metadata_update_thread(query_tag=None):
                             up_st["current"] += 1
                             icon = "✅" if res else "❌"
                             log_art = clean_query_text(r['artist'], is_artist=True)
+                            # 성공/실패 여부와 상관없이 무조건 로그 업데이트 (번호 점프 방지)
                             up_st[
                                 "last_log"] = f"[{display_name}] {up_st['current']}/{up_st['total']} | {log_art} -> {icon}"
-                    except:
+                    except Exception as e:
                         with update_lock:
                             up_st["current"] += 1
+                            # 오류 발생 시에도 로그를 남겨 멈춤 현상 방지
+                            up_st[
+                                "last_log"] = f"[{display_name}] {up_st['current']}/{up_st['total']} | 오류: {str(e)[:20]}"
 
                 futures.append(executor.submit(run_match))
-                time.sleep(0.02)
+                time.sleep(0.02)  # API 부하 방지용 미세 지연
 
             for future in as_completed(futures): pass
 
         db_q.put(None)
         rebuild_library()
+        up_st["last_log"] = f"🏁 {display_name} 엔진 작업 완료! (성공: {up_st['success']}, 실패: {up_st['fail']})"
+
     except Exception as e:
-        print(f"[!] Fatal: {e}")
+        up_st["last_log"] = f"❌ {display_name} 엔진 중단됨: {str(e)}"
     finally:
         up_st["is_running"] = False
         print(f"[*] 🏁 [{display_name}] 엔진 종료")
