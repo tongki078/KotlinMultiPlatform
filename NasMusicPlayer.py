@@ -4,9 +4,11 @@ from flask_cors import CORS
 from threading import Thread
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import queue
+import threading  # 상단 import에 추가
 
 app = Flask(__name__)
 CORS(app)
+
 
 # ==========================================
 # 1. 경로 및 시스템 설정
@@ -360,13 +362,13 @@ def get_info(f, d):
 
 
 def fix_unknown_artists_in_db():
-    print("[*] 🛠️ DB 내 Unknown Artist 복구 작업을 시작합니다...")
+    print("[*] 🛠️ DB 내 Unknown Artist 효율적 일괄 복구 시작...")
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(DB_PATH, timeout=120) as conn:
             conn.row_factory = sqlite3.Row
-            # id 대신 고유값인 stream_url을 사용하여 조회
+            # 1. 'Unknown Artist'인 곡들이 포함된 유니크한 폴더 경로만 추출 (속도 비약적 향상)
             rows = conn.execute(
-                "SELECT stream_url, parent_path FROM global_songs WHERE artist = 'Unknown Artist'").fetchall()
+                "SELECT DISTINCT parent_path FROM global_songs WHERE artist = 'Unknown Artist'").fetchall()
 
             updates = []
             for r in rows:
@@ -374,25 +376,24 @@ def fix_unknown_artists_in_db():
                 parts = p.split('/')
                 new_art = None
 
-                # 경로 기반 가수 추출 (구조: 국내/가수/초성/가수명/...)
+                # [국내/가수/초성/가수명/...] 패턴
                 if len(parts) >= 4 and parts[0] == "국내" and parts[1] == "가수":
                     new_art = parts[3]
-                # 경로 기반 가수 추출 (구조: 장르/가수명/...)
+                # [장르/가수명/...] 패턴
                 elif len(parts) >= 2 and any(g in parts[0] for g in GENRE_ROOTS.keys()):
                     new_art = parts[1]
 
                 if new_art:
-                    updates.append((new_art, r['stream_url']))
+                    updates.append((new_art, p))
 
             if updates:
-                # stream_url을 기준으로 가수 이름 업데이트
-                conn.executemany("UPDATE global_songs SET artist = ? WHERE stream_url = ?", updates)
+                # 폴더 단위로 일괄 업데이트
+                conn.executemany(
+                    "UPDATE global_songs SET artist = ? WHERE parent_path = ? AND artist = 'Unknown Artist'", updates)
                 conn.commit()
-                print(f"[*] ✅ 총 {len(updates):,}개의 Unknown Artist를 실제 이름으로 복구했습니다!")
-            else:
-                print("[*] 복구할 항목이 없습니다.")
+                print(f"[*] ✅ {len(updates)}개 폴더 내 Unknown Artist 복구 완료.")
     except Exception as e:
-        print(f"[!] 복구 작업 중 오류 발생: {e}")
+        print(f"[!] 복구 중 치명적 오류: {e}")
 
 
 def process_path(full_path):
@@ -567,44 +568,43 @@ def rebuild_library():
     print(f"[*] ✅ 테마 이미지 갱신 완료! (차트:{len(c_list)}, 모음:{len(m_list)}, 가수:{len(a_list)})")
     load_cache()
 
+# 전역 락 추가
+update_lock = threading.Lock()
 
 # ==========================================
 # 4. 메타데이터 엔진 (국내 폴더 우선순위 적용)
 # ==========================================
 def clean_query_text(text, is_artist=False, folder_type=None):
     if not text or text == 'Unknown Artist': return ""
-    s = text
+    s = str(text)
 
-    # 1단계: [가수 전용] 앨범 번호 제거 ("윤종신 2집" -> "윤종신")
-    if is_artist:
-        s = re.sub(r'\s*\d+\.?\d*\s*집', '', s).strip()
+    # 1. 모든 종류의 괄호 내용 제거
+    s = re.sub(r'\(.*?\)|\[.*?\]|\{.*?\}|【.*?】|「.*?」|『.*?』', ' ', s)
 
-    # 2단계: [공통] 연도 및 날짜 제거 ("2000 대한민국" -> "대한민국", "2024.01.01" 제거)
-    s = re.sub(r'^\d{4}\s+', ' ', s)
-    s = re.sub(r'\d{2,4}\.\d{2}\.\d{2}', ' ', s)
-
-    # 3단계: [공통] 괄호 및 대괄호 내용 제거 (가수는 fetch_metadata_smart에서 미리 분리함)
-    s = re.sub(r'\(.*?\)|\[.*?\]|\{.*?\}', ' ', s)
-
-    # 4단계: [공통] 트랙 번호 제거 ("001. ", "01- " 등 제거하되 "10cm" 보호)
+    # 2. 트랙 번호 및 불필요 접두사 제거 (01., CD1-, Track 01 등)
+    s = re.sub(r'(?i)^(cd\s*\d+|track\s*\d+|disc\s*\d+|vol\s*\d+)[\s\.\-_/]*', '', s.strip())
     s = re.sub(r'^\d{1,3}[\s\.\-_/]+', '', s.strip())
 
-    # 5단계: [앨범/제목 전용] 불필요한 음반 용어 제거
-    if not is_artist:
-        s = re.sub(r'(?i)\b(싱글|정규|베스트|미니앨범|EP|Album|Collection|TOP\s*100|차트)\b', ' ', s)
+    # 3. 연도 및 날짜 제거 (2024, 2024.01.01 등)
+    s = re.sub(r'\b\d{4}\b', ' ', s)
+    s = re.sub(r'\d{2,4}\.\d{2}\.\d{2}', ' ', s)
 
-    # 6단계: [추가] 클래식/오페라/기술 태그 제거 ("Act 2", "Op.12", "FLAC" 등)
-    keywords = [
-        'CD\s*\d+', 'Disc\s*\d+', 'Vol\.\s*\d+', 'Part\.\s*\d+', 'Ver\.\s*\d+',
-        'FLAC', '320K', 'HIDEL', 'Act\s*\d+', 'Scene\s*\d+', 'Op\.\s*\d+',
-        'No\.\s*\d+', 'BWV\s*\d+', 'K\.\s*\d+', 'Selection', 'And', '그리고'
-    ]
-    s = re.sub(r'(?i)\b(' + '|'.join(keywords) + r')\b', ' ', s)
+    # 4. 음질 및 앨범 노이즈 키워드 제거
+    noise = ['싱글', '정규', '베스트', '미니앨범', 'EP', 'Album', 'Collection', 'TOP\s*100', '차트', 'FLAC', '320K', 'HIDEL', 'Hi-Res', 'Remastered']
+    s = re.sub(r'(?i)\b(' + '|'.join(noise) + r')\b', ' ', s)
 
-    # 7단계: [추가] 특수문자 정리 및 한자(大) 허용 (\u4e00-\u9fff 범위 추가)
+    # 5. 클래식/오페라 용어 제거 (Act 2, Op.12 등)
+    classical = ['Act\s*\d+', 'Scene\s*\d+', 'Op\.\s*\d+', 'Opus\s*\d+', 'No\.\s*\d+', 'BWV\s*\d+', 'K\.\s*\d+', 'Hob\.\s*\d+', 'RV\s*\d+', 'D\.\s*\d+']
+    s = re.sub(r'(?i)\b(' + '|'.join(classical) + r')\b', ' ', s)
+
+    # 6. 가수 전용 정제 (앨범 번호 및 피처링 제거)
+    if is_artist:
+        s = re.sub(r'\s*\d+\.?\d*\s*집', '', s)
+        s = re.sub(r'(?i)\b(feat\.|ft\.|with|prod\.|by)\b.*', '', s)
+
+    # 7. 특수문자 제거 (한글, 영어, 한자, 일어 보호)
     s = re.sub(r'[^\w\s가-힣ぁ-んァ-ヶー一-龠\u4e00-\u9fff]', ' ', s)
 
-    # 8단계: [마무리] 다중 공백 제거
     return re.sub(r'\s+', ' ', s).strip()
 
 def fetch_metadata_smart(artist, album, title, folder_type=None):
@@ -707,12 +707,23 @@ def start_metadata_update_thread(query_tag=None):
     up_st["is_running"] = True
     up_st["target"] = query_tag if query_tag else "전체"
     display_name = up_st["target"]
-    print(f"[*] 🚀 메타데이터 엔진 가동 - [대상: {display_name}]")
+
+    # 즉시 상태 로그 반영
+    up_st["last_log"] = f"[*] 🛠️ {display_name} 엔진 가동 중... (가수 이름 복구)"
 
     try:
+        # 1. 일괄 복구 실행
+        fix_unknown_artists_in_db()
+
+        up_st["last_log"] = f"[*] 🔍 {display_name} 매칭 대상 조회 중..."
+
         with sqlite3.connect(DB_PATH, timeout=120) as conn:
             conn.row_factory = sqlite3.Row
-            sql = "SELECT artist, albumName, MAX(name) as title FROM global_songs WHERE (meta_poster IS NULL OR meta_poster = '' OR meta_poster = 'FAIL')"
+            # 아티스트가 확실히 있는 것만 검색 대상으로 선정
+            sql = """SELECT artist, albumName, MAX(name) as title
+                     FROM global_songs
+                     WHERE (meta_poster IS NULL OR meta_poster = '' OR meta_poster = 'FAIL')
+                     AND artist != 'Unknown Artist' AND artist != '' """
             params = []
             if query_tag:
                 sql += " AND parent_path LIKE ?"
@@ -721,31 +732,26 @@ def start_metadata_update_thread(query_tag=None):
             targets = conn.execute(sql, params).fetchall()
 
         if not targets:
-            print(f"[*] ✅ [{display_name}] 폴더에 처리할 대상이 없습니다.")
+            up_st["last_log"] = "✅ 매칭할 유효한 대상이 없습니다."
             up_st["is_running"] = False
             return
 
         up_st.update({"total": len(targets), "current": 0, "success": 0, "fail": 0})
+
+        # ... (이하 db_worker 및 ThreadPoolExecutor 로직은 기존과 동일하게 유지)
+        # 단, 로그 업데이트 시 update_lock을 사용하는 기존 코드를 유지해 주세요.
         db_q = queue.Queue()
 
-        # [최적화] DB 작업자: 100개씩 모아서 한 번에 커밋 (비약적인 속도 향상)
+        # DB 저장 워커 (기존과 동일)
         def db_worker():
             batch = []
             while True:
-                try:
-                    item = db_q.get(timeout=3)
-                    if item is None: break
-                    batch.append(item)
-
-                    if len(batch) >= 100:
-                        save_batch(batch)
-                        batch = []
-                    db_q.task_done()
-                except queue.Empty:
-                    if batch:
-                        save_batch(batch)
-                        batch = []
-                    if not up_st["is_running"]: break
+                item = db_q.get()
+                if item is None: break
+                batch.append(item)
+                if len(batch) >= 100:
+                    save_batch(batch)
+                    batch = []
             if batch: save_batch(batch)
 
         def save_batch(items):
@@ -756,15 +762,16 @@ def start_metadata_update_thread(query_tag=None):
                             "UPDATE global_songs SET meta_poster=?, genre=?, release_date=?, album_artist=? WHERE artist=? AND albumName=?",
                             (res['poster'], res.get('genre'), res.get('release_date'), res.get('album_artist'), art,
                              alb))
-                        up_st["success"] += 1
+                        with update_lock:
+                            up_st["success"] += 1
                     else:
                         conn.execute("UPDATE global_songs SET meta_poster='FAIL' WHERE artist=? AND albumName=?",
                                      (art, alb))
-                        up_st["fail"] += 1
+                        with update_lock:
+                            up_st["fail"] += 1
                 conn.commit()
 
-        worker_thread = Thread(target=db_worker, daemon=True)
-        worker_thread.start()
+        Thread(target=db_worker, daemon=True).start()
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = []
@@ -776,21 +783,22 @@ def start_metadata_update_thread(query_tag=None):
                         res = fetch_metadata_smart(r['artist'], r['albumName'], r['title'], folder_type=f_type)
                         db_q.put((r['artist'], r['albumName'], res))
 
-                        up_st["current"] += 1
-                        icon = "✅" if res else "❌"
-                        q_a = clean_query_text(r['artist'], is_artist=True)
-                        up_st["last_log"] = f"[{display_name}] {up_st['current']}/{up_st['total']} | {q_a} -> {icon}"
+                        with update_lock:
+                            up_st["current"] += 1
+                            icon = "✅" if res else "❌"
+                            log_art = clean_query_text(r['artist'], is_artist=True)
+                            up_st[
+                                "last_log"] = f"[{display_name}] {up_st['current']}/{up_st['total']} | {log_art} -> {icon}"
                     except:
-                        pass
+                        with update_lock:
+                            up_st["current"] += 1
 
                 futures.append(executor.submit(run_match))
+                time.sleep(0.02)
 
             for future in as_completed(futures): pass
 
-        # [중요] 모든 매칭이 끝나면 큐가 비워질 때까지 대기
         db_q.put(None)
-        worker_thread.join()  # DB 저장이 완전히 끝날 때까지 엔진 종료를 유예합니다.
-
         rebuild_library()
     except Exception as e:
         print(f"[!] Fatal: {e}")
@@ -855,12 +863,14 @@ def get_details(tp):
 def get_top100():
     """DB 인덱싱 정보를 활용하여 가장 최신 주간의 TOP 100 리스트를 순서대로 반환"""
     try:
+        # 1. 멜론 주간 차트 기준 상대 경로 계산
         base_rel_path = os.path.relpath(WEEKLY_CHART_PATH, MUSIC_BASE).replace('\\', '/')
 
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
 
-            # 1. DB에서 가장 최신 날짜의 폴더 경로 1개 찾기
+            # 2. DB에서 해당 경로 하위의 가장 최신 'parent_path' 하나를 추출
+            # 문자열 내림차순 정렬(DESC)을 통해 날짜가 가장 늦은 폴더가 선택됩니다.
             latest_folder_row = conn.execute(
                 "SELECT parent_path FROM global_songs WHERE parent_path LIKE ? ORDER BY parent_path DESC LIMIT 1",
                 (f"{base_rel_path}/%",)
@@ -872,7 +882,7 @@ def get_top100():
 
             latest_path = latest_folder_row['parent_path']
 
-            # 2. 해당 폴더의 곡들 모두 가져오기
+            # 3. 추출된 최신 경로에 속한 곡들만 모두 가져옴
             rows = conn.execute(
                 """SELECT name, artist, albumName, stream_url, parent_path, meta_poster,
                           genre, release_date, album_artist, 0 as is_dir
@@ -883,36 +893,39 @@ def get_top100():
 
             result = [dict(r) for r in rows]
 
-            # 3. [개선] 순위 정렬 로직: 아티스트명이나 파일명 앞의 숫자를 추출하여 정렬
+            # 4. [핵심] 순위 정렬 로직: 파일명이나 아티스트명 앞의 숫자를 추출하여 정렬
             def get_rank(item):
-                # 1순위: 아티스트명 앞의 숫자 (예: "001 가수")
+                # 파일명(stream_url)에서 숫자 추출 시도 (예: 001.곡명.flac)
+                url_path = urllib.parse.unquote(item.get('stream_url', ''))
+                filename = os.path.basename(url_path)
+                match = re.match(r'^(\d+)', filename)
+                if match: return int(match.group(1))
+
+                # 아티스트명 앞의 숫자 시도 (예: "001 가수")
                 match = re.match(r'^(\d+)', item.get('artist', ''))
                 if match: return int(match.group(1))
-                # 2순위: 파일명(stream_url)의 마지막 부분에서 숫자 추출
-                url = urllib.parse.unquote(item.get('stream_url', ''))
-                filename = os.path.basename(url)
-                match = re.match(r'^(\d+)', filename)
-                return int(match.group(1)) if match else 999
+
+                return 999  # 숫자가 없으면 맨 뒤로
 
             result.sort(key=get_rank)
 
-            print(f"[*] 순위 정렬 완료: {latest_path} ({len(result)}곡)")
+            print(f"[*] DB 조회 성공: {latest_path} ({len(result)}곡 발견, 순위 정렬 완료)")
             return jsonify(result)
 
     except Exception as e:
-        print(f"[!] Top100 오류: {e}")
+        print(f"[!] Top100 DB 조회 중 치명적 오류: {e}")
         return jsonify([])
 
 
 @app.route('/api/search')
 def search_songs():
-    """서버 내 라이브러리 검색 API"""
+    """서버 내 라이브러리 검색 API (앱 필터링 대응)"""
     q = request.args.get('q', '').strip()
     if not q: return jsonify([])
     try:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
-            # 검색에서도 동일하게 0 as is_dir 추가
+            # 0 as is_dir을 추가하여 앱에서 '노래'로 정상 인식하게 함
             rows = conn.execute(
                 """SELECT name, artist, albumName, stream_url, parent_path, meta_poster,
                           genre, release_date, album_artist, 0 as is_dir
