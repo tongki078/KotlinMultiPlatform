@@ -112,6 +112,7 @@ fun App(
                                 searchViewModel.loadThemeDetails(theme)
                                 navController.navigate("theme_detail/${theme.name}")
                             },
+                            onNavigateToArtistGrid = { folderName -> navController.navigate("artist_grid/$folderName") },
                             onVoiceSearchClick = onVoiceSearchClick,
                             onDownloadSong = onDownloadSong,
                             onDeleteSong = onDeleteSong,
@@ -124,6 +125,20 @@ fun App(
                                     restoreState = true
                                 }
                             }
+                        )
+                    }
+                    composable("artist_grid/{folderType}") { backStackEntry ->
+                        val folderType = backStackEntry.arguments?.getString("folderType") ?: "국내"
+                        val uiState by searchViewModel.uiState.collectAsState()
+                        
+                        LaunchedEffect(folderType) {
+                            searchViewModel.loadArtists(folderType)
+                        }
+                        
+                        ArtistGridScreen(
+                            artists = uiState.artistGrid,
+                            onArtistClick = { artistName -> navController.navigate("artist_detail/$artistName") },
+                            onBack = { navController.popBackStack() }
                         )
                     }
                     composable("theme_detail/{themeName}") { backStackEntry ->

@@ -49,6 +49,7 @@ fun MusicSearchScreen(
     onNavigateToAddToPlaylist: (Song) -> Unit,
     onNavigateToAlbum: (Album) -> Unit,
     onNavigateToTheme: (Theme) -> Unit,
+    onNavigateToArtistGrid: (String) -> Unit,
     onSongClick: (Song) -> Unit,
     onNavigateToPlaylists: () -> Unit,
     onVoiceSearchClick: () -> Unit,
@@ -137,7 +138,12 @@ fun MusicSearchScreen(
                         item { ThemeSection(title = "가수별 추천", themes = uiState.artistThemes, onNavigateToTheme = onNavigateToTheme) }
                     }
                     if (uiState.genreThemes.isNotEmpty()) {
-                        item { GenreGridSection(genres = uiState.genreThemes, onGenreClick = onNavigateToTheme) }
+                        item { 
+                            GenreGridSection(
+                                genres = uiState.genreThemes, 
+                                onGenreClick = { theme -> onNavigateToArtistGrid(theme.name) }
+                            ) 
+                        }
                     }
                     
                     // 멜론 주간 TOP 100 헤더

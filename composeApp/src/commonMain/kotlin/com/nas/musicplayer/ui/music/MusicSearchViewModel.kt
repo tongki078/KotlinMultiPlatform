@@ -13,6 +13,7 @@ import com.nas.musicplayer.db.RecentSearch
 import com.nas.musicplayer.network.MusicApiServiceImpl
 import com.nas.musicplayer.network.httpClient
 import com.nas.musicplayer.network.toSongList
+import com.nas.musicplayer.network.Artist as NetworkArtist
 import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.http.takeFrom
@@ -53,7 +54,8 @@ data class MusicSearchUiState(
     val recentSearches: List<RecentSearch> = emptyList(),
     val albums: List<Album> = emptyList(),
     val downloadingSongIds: Set<Long> = emptySet(),
-    val downloadedSongKeys: Set<String> = emptySet()
+    val downloadedSongKeys: Set<String> = emptySet(),
+    val artistGrid: List<NetworkArtist> = emptyList() // 아티스트 그리드용 데이터
 )
 
 class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel() {
@@ -79,6 +81,18 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         fun Factory(repository: MusicRepository): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 MusicSearchViewModel(repository)
+            }
+        }
+    }
+
+    // 아티스트 그리드 데이터 로드
+    fun loadArtists(folderType: String) {
+        viewModelScope.launch {
+            try {
+                val response = httpClient.get("$pythonBaseUrl/api/library/artists/$folderType").body<List<NetworkArtist>>()
+                _uiState.update { it.copy(artistGrid = response) }
+            } catch (e: Exception) {
+                println("Failed to load artists: ${e.message}")
             }
         }
     }
