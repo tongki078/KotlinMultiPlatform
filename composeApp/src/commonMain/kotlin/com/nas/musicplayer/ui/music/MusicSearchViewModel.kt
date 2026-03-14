@@ -102,20 +102,22 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
 
     fun loadArtistDetails(artistName: String) {
         viewModelScope.launch {
+            // 로딩 상태를 확실히 업데이트하고 기존 데이터를 비움
             _uiState.update { it.copy(isArtistLoading = true, selectedArtist = null) }
             try {
                 val albums = httpClient.get("$pythonBaseUrl/api/library/albums_by_artist/${artistName.encodeURLPath()}").body<List<Album>>()
-                println("[*] ${artistName}의 앨범 로드 성공: ${albums.size}개")
                 
+                // Artist 객체 생성 시 albums 리스트를 명시적으로 전달
                 val artistInfo = com.nas.musicplayer.Artist(
                     name = artistName,
-                    imageUrl = albums.firstOrNull()?.imageUrl,
+                    imageUrl = albums.firstOrNull { !it.imageUrl.isNullOrBlank() }?.imageUrl,
                     albums = albums,
-                    popularSongs = emptyList()
+                    popularSongs = emptyList() 
                 )
+                
                 _uiState.update { it.copy(selectedArtist = artistInfo, isArtistLoading = false) }
             } catch (e: Exception) { 
-                println("[!] Artist Details Load Error: ${e.message}")
+                println("[!] Artist Details Error: ${e.message}")
                 _uiState.update { it.copy(isArtistLoading = false) } 
             }
         }
@@ -135,7 +137,6 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
                 )
                 _uiState.update { it.copy(selectedAlbum = albumInfo, isAlbumLoading = false) }
             } catch (e: Exception) { 
-                println("[!] Album Details Load Error: ${e.message}")
                 _uiState.update { it.copy(isAlbumLoading = false) } 
             }
         }
@@ -160,14 +161,6 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         val cleanArtist = artist.replace(Regex("""[^a-zA-Z0-9가-힣ㄱ-ㅎㅏ-ㅣ]"""), "").lowercase()
         val cleanTitle = title.replace(Regex("""[^a-zA-Z0-9가-힣ㄱ-ㅎㅏ-ㅣ]"""), "").lowercase()
         return "$cleanArtist-$cleanTitle"
-    }
-
-    fun startDownloading(songId: Long) {
-        _uiState.update { it.copy(downloadingSongIds = it.downloadingSongIds + songId) }
-    }
-
-    fun stopDownloading(songId: Long) {
-        _uiState.update { it.copy(downloadingSongIds = it.downloadingSongIds - songId) }
     }
 
     fun onSearchQueryChanged(query: String) {
@@ -248,6 +241,14 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
                 _uiState.update { it.copy(isLoading = false) }
             }
         }
+    }
+
+    fun startDownloading(songId: Long) {
+        _uiState.update { it.copy(downloadingSongIds = it.downloadingSongIds + songId) }
+    }
+
+    fun stopDownloading(songId: Long) {
+        _uiState.update { it.copy(downloadingSongIds = it.downloadingSongIds - songId) }
     }
 
     private fun cleanSongInfo(s: Song): Song {
