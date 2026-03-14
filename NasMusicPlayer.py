@@ -9,16 +9,6 @@ import threading  # 상단 import에 추가
 app = Flask(__name__)
 CORS(app)
 
-# [폴더별 매칭 전략 및 정제 설정]
-META_STRATEGIES = {
-    "국내":   {"priority": ["maniadb", "deezer"], "clean": "korean"},
-    "외국":   {"priority": ["deezer", "maniadb"], "clean": "western"},
-    "일본":   {"priority": ["deezer", "maniadb"], "clean": "western"},
-    "DSD":    {"priority": ["deezer"], "clean": "western"},
-    "클래식": {"priority": ["deezer"], "clean": "western"},
-    "OST":    {"priority": ["deezer"], "clean": "western"}
-}
-
 # ==========================================
 # 1. 경로 및 시스템 설정
 # ==========================================
@@ -35,6 +25,16 @@ GENRE_ROOTS = {
     "클래식": os.path.join(MUSIC_BASE, "클래식"),
     "DSD": os.path.join(MUSIC_BASE, "DSD"),
     "OST": os.path.join(MUSIC_BASE, "OST")
+}
+
+# 폴더별 정제 방식(clean)과 검색 엔진 우선순위(priority) 사전 정의
+META_STRATEGIES = {
+    "국내":   {"priority": ["maniadb", "deezer"], "clean": "korean"},
+    "외국":   {"priority": ["deezer", "maniadb"], "clean": "western"},
+    "일본":   {"priority": ["deezer"], "clean": "western"},
+    "클래식": {"priority": ["deezer"], "clean": "western"},
+    "DSD":    {"priority": ["deezer"], "clean": "western"},
+    "OST":    {"priority": ["deezer"], "clean": "western"}
 }
 
 BASE_URL = "http://192.168.0.2:4444"
@@ -149,6 +149,11 @@ MONITOR_HTML = '''
                 <div class="box">
                     <h2>📁 인덱싱 엔진 상태</h2>
                     <div class="stat-grid">
+                        <!-- 전체 항목 표시 카드 추가 -->
+                        <div class="stat-card" style="grid-column: 1 / -1; background: rgba(56, 189, 248, 0.1); margin-bottom: 10px;">
+                            <span id="meta-db-total" class="stat-value">0</span>
+                            <span class="stat-label">전체 라이브러리 항목 (앨범/가수 그룹 기준)</span>
+                        </div>
                         <div class="stat-card">
                             <span id="idx-total" class="stat-value">0</span>
                             <span class="stat-label">라이브러리 총 곡수</span>
@@ -171,10 +176,6 @@ MONITOR_HTML = '''
                 <div class="box">
                     <h2>🖼️ 메타데이터 매칭 현황</h2>
                     <div class="stat-grid">
-                        <div class="stat-card" style="grid-column: 1 / -1; background: rgba(56, 189, 248, 0.1);">
-                            <span id="meta-db-total" class="stat-value">0</span>
-                            <span class="stat-label">전체 라이브러리 항목</span>
-                        </div>
                         <div class="stat-card">
                             <span id="meta-success" class="stat-value" style="color: var(--success);">0</span>
                             <span class="stat-label">매칭 성공 (OK)</span>
@@ -213,7 +214,7 @@ MONITOR_HTML = '''
                         <option value="All">전체 카테고리</option>
                         <option value="국내">🇰🇷 국내</option>
                         <option value="외국">🌎 외국</option>
-                        <option value="일본">🇯🇵 일본</option>
+                        <option value="일본">🌎 일본</option>
                         <option value="클래식">🎻 클래식</option>
                         <option value="DSD">🎻 DSD</option>
                         <option value="OST">🎬 OST</option>
@@ -270,19 +271,11 @@ MONITOR_HTML = '''
         let lastMetaLog = "";
         let expPage = 1;
 
-        // 탭 전환 시스템
-        function switchTab(tabId, el) {
-            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-            document.getElementById('tab-' + tabId).classList.add('active');
-            el.classList.add('active');
-            if(tabId === 'explorer') loadExplorer(1);
-        }
+
 
         // 로그 출력 최적화
         function addLog(msg) {
             const box = document.getElementById('log-box');
-            if (!box) return;
             const div = document.createElement('div');
             div.style.padding = "2px 0";
             div.style.borderBottom = "1px solid rgba(255,255,255,0.03)";
@@ -292,48 +285,57 @@ MONITOR_HTML = '''
             if(box.childElementCount > 400) box.removeChild(box.firstChild);
         }
 
-        // 데이터 익스플로러 로딩
         async function loadExplorer(page) {
             expPage = page;
             const cat = document.getElementById('exp-cat').value;
             const q = document.getElementById('exp-search').value;
             const tbody = document.getElementById('exp-body');
-            if(!tbody) return;
 
-            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:20px;">🔍 데이터를 불러오는 중...</td></tr>`;
+            if(!tbody) return; // 요소가 없으면 중단
 
             try {
                 const res = await fetch(`/api/admin/data?category=${cat}&q=${encodeURIComponent(q)}&page=${page}`);
                 const data = await res.json();
 
+                // [중요] 데이터가 배열인지 확인 (객체면 에러 문구 출력)
                 if (!Array.isArray(data)) {
-                    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--danger); padding:20px;">서버 응답 오류</td></tr>`;
+                    console.error("Expected array but got:", data);
+                    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--danger); padding:20px;">서버 응답 형식이 올바르지 않습니다.</td></tr>`;
                     return;
                 }
 
                 if (data.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:20px; color:#64748b;">조회된 결과가 없습니다.</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:20px; color:#64748b;">조회된 결과가 없습니다.</td></tr>`;
                 } else {
                     tbody.innerHTML = data.map(r => `
-                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
-                            <td style="color: #64748b; padding:12px;">${r.id}</td>
-                            <td style="font-weight:600; padding:12px;">${r.name || '-'}</td>
-                            <td style="color: var(--accent); padding:12px;">${r.artist || '-'}</td>
-                            <td style="opacity:0.8; padding:12px;">${r.albumName || '-'}</td>
-                            <td style="text-align: center; padding:12px;">${r.meta_poster && r.meta_poster !== 'FAIL' ? '✅' : '❌'}</td>
-                            <td style="font-size: 12px; color: #94a3b8; padding:12px;">${r.genre || '-'}</td>
+                        <tr style="border-bottom: 1px solid #334155;">
+                            <td style="padding:12px; color:#64748b;">${r.id}</td>
+                            <td style="padding:12px; font-weight:600;">${r.name || '-'}</td>
+                            <td style="padding:12px; color:var(--accent); font-weight:500;">${r.artist || '-'}</td>
+                            <td style="padding:12px; text-align:center;">${r.meta_poster && r.meta_poster !== 'FAIL' ? '✅' : '❌'}</td>
+                            <td style="padding:12px; font-size:12px; color:#94a3b8;">${r.genre || '-'}</td>
                         </tr>`).join('');
                 }
                 document.getElementById('exp-page').innerText = page + ' 페이지';
             } catch (e) {
                 console.error("Load Error:", e);
-                tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--danger); padding:20px;">로딩 실패</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--danger); padding:20px;">데이터 로딩 중 치명적 오류 발생</td></tr>`;
             }
         }
 
         function movePage(d) {
-            if(expPage + d < 1) return;
-            loadExplorer(expPage + d);
+            if(expPage + d >= 1) loadExplorer(expPage + d);
+        }
+
+        // 탭 전환 시 데이터 로딩
+        function switchTab(tabId, el) {
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            document.getElementById('tab-' + tabId).classList.add('active');
+            el.classList.add('active');
+
+            // 데이터 탐색기 탭 클릭 시 로드 함수 실행
+            if(tabId === 'explorer') loadExplorer(1);
         }
 
         // SQL 다이렉트 런너
@@ -380,36 +382,28 @@ MONITOR_HTML = '''
         // 상태 실시간 업데이트 (2초마다)
         function updateStatus() {
             fetch('/api/indexing/status').then(r=>r.json()).then(d=>{
-                const totalEl = document.getElementById('idx-total');
-                const speedEl = document.getElementById('idx-speed');
-                const fillEl = document.getElementById('idx-fill');
-                const progressTextEl = document.getElementById('idx-progress-text');
-                const etaEl = document.getElementById('idx-eta');
-                const logEl = document.getElementById('idx-log');
-
-                if(totalEl) totalEl.innerText = d.songs_found.toLocaleString();
-                if(speedEl) speedEl.innerText = d.speed;
+                document.getElementById('idx-total').innerText = d.songs_found.toLocaleString();
+                document.getElementById('idx-speed').innerText = d.speed;
                 const p = (d.total_dirs > 0 ? (d.processed_dirs / d.total_dirs * 100) : 0).toFixed(1);
-                if(fillEl) fillEl.style.width = p + '%';
-                if(progressTextEl) progressTextEl.innerText = `진행률: ${p}% (${d.processed_dirs.toLocaleString()} / ${d.total_dirs.toLocaleString()})`;
-                if(etaEl) etaEl.innerText = "예상 완료: " + d.eta;
-                if(logEl) logEl.innerText = "🚀 " + d.last_log;
+                document.getElementById('idx-fill').style.width = p + '%';
+                document.getElementById('idx-progress-text').innerText = `진행률: ${p}% (${d.processed_dirs.toLocaleString()} / ${d.total_dirs.toLocaleString()})`;
+                document.getElementById('idx-eta').innerText = "예상 완료: " + d.eta;
+                document.getElementById('idx-log').innerText = "🚀 " + d.last_log;
             });
 
             fetch('/api/metadata/status').then(r=>r.json()).then(d=>{
+                // 전체 개수 업데이트 코드 추가
                 const totalDbEl = document.getElementById('meta-db-total');
-                const successEl = document.getElementById('meta-success');
-                const failEl = document.getElementById('meta-fail');
-                const stopBtn = document.getElementById('stop-btn');
-
                 if(totalDbEl) totalDbEl.innerText = (d.db_total || 0).toLocaleString();
-                if(successEl) successEl.innerText = (d.db_success || 0).toLocaleString();
-                if(failEl) failEl.innerText = (d.db_fail || 0).toLocaleString();
+
+                document.getElementById('meta-success').innerText = (d.db_success || 0).toLocaleString();
+                document.getElementById('meta-fail').innerText = (d.db_fail || 0).toLocaleString();
 
                 if(d.last_log && d.last_log !== lastMetaLog) {
                     addLog(`<span style="color:var(--accent); font-weight:bold;">[META]</span> ${d.last_log}`);
                     lastMetaLog = d.last_log;
                 }
+                const stopBtn = document.getElementById('stop-btn');
                 if(stopBtn) stopBtn.style.display = d.is_running ? 'inline-flex' : 'none';
             });
         }
@@ -425,6 +419,7 @@ MONITOR_HTML = '''
 </body>
 </html>
 '''
+
 
 # ==========================================
 # 3. 핵심 로직: DB, 스캔, 인덱싱 (중간 저장 및 이어하기)
@@ -759,7 +754,7 @@ def clean_query_text(text, is_artist=False, folder_mode="western"):
             s = re.sub(r'(?i)\s+[vwo][A-Z][a-z]+', ' ', s)
         elif folder_mode == "korean":
             # 국내 폴더 특수 패턴 제거
-            s = re.sub(r'(?i)\b(AMAZING MUSIC|Moved da Christ|YRG\d+|음자리표|대학생|학부|대학교)\b', '', s)
+            s = re.sub(r'(?i)\b(AMAZING MUSIC|Moved da Christ|YRG\d+|음자리표)\b', '', s)
 
         s = re.split(r'[,/&]|\(', s)[0].strip()
 
@@ -767,23 +762,25 @@ def clean_query_text(text, is_artist=False, folder_mode="western"):
     s = re.sub(r'\(.*?\)|\[.*?\]|\{.*?\}', ' ', s)
     s = re.sub(r'\d{2,4}\.\d{2}\.\d{2}', ' ', s)
     s = re.sub(r'^\d{1,3}[\s\.\-_/]+', '', s.strip())
-
-    # 마지막 정리
     s = re.sub(r'[^\w\s가-힣ぁ-んァ-ヶー一-龠\u4e00-\u9fff]', ' ', s)
-    return re.sub(r'\s+', ' ', s).strip()
+    # [추가] 마지막에 혹시 남았을지 모르는 코드형 문자열 제거 (선택 사항)
+    s = re.sub(r'\s{2,}', ' ', s)
+    return s.strip()
 
 
 def fetch_metadata_smart(artist, album, title, folder_type=None):
-    # 설정 가져오기 (기본값 설정)
+    # 전략 가져오기 (기본값 설정)
     strategy = META_STRATEGIES.get(folder_type, {"priority": ["deezer"], "clean": "western"})
     clean_mode = strategy["clean"]
 
-    # 1. 아티스트 이름 정제 (전략에 따라 k-pop or western 모드 자동 적용)
+    # 1. 아티스트/앨범명 정제
     q_art = clean_query_text(artist, is_artist=True, folder_mode=clean_mode)
     q_alb = clean_query_text(album, is_artist=False, folder_mode=clean_mode)
     q_tit = clean_query_text(title, is_artist=False, folder_mode=clean_mode)
 
-    # 2. 매칭 전략 실행
+    if not q_art and not q_alb and not q_tit: return None
+
+    # 2. 폴더별 고유 검색 전략 분기
     strategies = []
     if q_art and q_tit: strategies.append((q_art, q_tit))
 
@@ -795,16 +792,18 @@ def fetch_metadata_smart(artist, album, title, folder_type=None):
         if q_tit: strategies.append(("", q_tit))
     elif folder_type == "클래식":
         if q_art and q_tit: strategies.append((q_art, q_tit))
-    else: # 외국, 일본, DSD 등 기본 전략
+    else:  # 외국, 일본, DSD 포함 기본 전략
         if q_art and q_alb: strategies.append((q_art, q_alb))
         if q_art: strategies.append((q_art, ""))
 
+    # 3. 전략 순서대로 엔진 실행
     for a_q, b_q in strategies:
-        # 전략에 정의된 순서대로 엔진 실행
         for engine in strategy["priority"]:
             res = None
-            if engine == "deezer": res = fetch_deezer_metadata(a_q, b_q)
-            elif engine == "maniadb": res = fetch_maniadb_metadata(a_q, b_q)
+            if engine == "deezer":
+                res = fetch_deezer_metadata(a_q, b_q)
+            elif engine == "maniadb":
+                res = fetch_maniadb_metadata(a_q, b_q)
 
             if res: return res
         time.sleep(0.3)
@@ -876,7 +875,7 @@ def start_metadata_update_thread(query_tag=None):
             conn.row_factory = sqlite3.Row
             sql = """SELECT artist, albumName, MAX(name) as title
                      FROM global_songs
-                     WHERE (meta_poster IS NULL OR meta_poster = '')
+                     WHERE (meta_poster IS NULL OR meta_poster = '' OR meta_poster = 'FAIL')
                      AND artist != 'Unknown Artist' AND artist != '' """
             params = []
             if query_tag:
@@ -942,7 +941,7 @@ def start_metadata_update_thread(query_tag=None):
                         with update_lock:
                             up_st["current"] += 1
                             icon = "✅" if res else "❌"
-                            log_art = clean_query_text(r['artist'], is_artist=True, folder_mode=META_STRATEGIES.get(f_type, {}).get("clean", "western"))
+                            log_art = clean_query_text(r['artist'], is_artist=True)
                             # 성공/실패 여부와 상관없이 무조건 로그 업데이트 (번호 점프 방지)
                             up_st[
                                 "last_log"] = f"[{display_name}] {up_st['current']}/{up_st['total']} | {log_art} -> {icon}"
@@ -977,6 +976,10 @@ def get_admin_data():
     limit = 50
     offset = (page - 1) * limit
 
+    # [로그] 요청 파라미터 확인
+    print(f"--- [DEBUG] get_admin_data Call ---")
+    print(f"[*] Category: {cat}, Search: '{q}', Page: {page}")
+
     # [수정] id -> rowid AS id (SQLite 내장 행 번호 사용)
     query = "SELECT rowid AS id, name, artist, albumName, meta_poster, genre FROM global_songs WHERE 1=1"
     params = []
@@ -989,15 +992,26 @@ def get_admin_data():
         query += " AND (name LIKE ? OR artist LIKE ? OR albumName LIKE ?)"
         params.extend([f"%{q}%", f"%{q}%", f"%{q}%"])
 
-    query += f" ORDER BY rowid DESC LIMIT {limit} OFFSET {offset}"
+    query += f" ORDER BY id DESC LIMIT {limit} OFFSET {offset}"
+
+    # [로그] 최종 쿼리와 파라미터 확인
+    print(f"[*] SQL Query: {query}")
+    print(f"[*] SQL Params: {params}")
 
     try:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(query, params).fetchall()
+
+            # [로그] 결과 개수 확인
+            print(f"[*] Found Rows: {len(rows)}")
+            print(f"----------------------------------")
+
             return jsonify([dict(r) for r in rows])
     except Exception as e:
         print(f"[!] Admin API Error: {e}")
+        import traceback
+        traceback.print_exc()  # 상세 에러 스택트레이스 출력
         return jsonify([])
 
 @app.route('/api/admin/query', methods=['POST'])
@@ -1049,23 +1063,6 @@ def start_meta():
 @app.route('/api/themes')
 def get_themes(): return jsonify(cache)
 
-@app.route('/api/library/artists/<folder_type>')
-def get_library_artists(folder_type):
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                """SELECT artist, MAX(meta_poster) as cover
-                   FROM global_songs
-                   WHERE parent_path LIKE ? AND artist != 'Unknown Artist'
-                   GROUP BY artist
-                   ORDER BY artist ASC""",
-                (f"{folder_type}%",)
-            ).fetchall()
-            return jsonify([{"name": r['artist'], "cover": r['cover']} for r in rows])
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
 
 @app.route('/api/theme-details/<path:tp>')
 def get_details(tp):
@@ -1081,6 +1078,7 @@ def get_details(tp):
 
 @app.route('/api/top100')
 def get_top100():
+    """DB 인덱싱 정보를 활용하여 가장 최신 주간의 TOP 100 리스트를 순서대로 반환"""
     try:
         # 1. 멜론 주간 차트 기준 상대 경로 계산
         base_rel_path = os.path.relpath(WEEKLY_CHART_PATH, MUSIC_BASE).replace('\\', '/')
@@ -1089,6 +1087,7 @@ def get_top100():
             conn.row_factory = sqlite3.Row
 
             # 2. DB에서 해당 경로 하위의 가장 최신 'parent_path' 하나를 추출
+            # 문자열 내림차순 정렬(DESC)을 통해 날짜가 가장 늦은 폴더가 선택됩니다.
             latest_folder_row = conn.execute(
                 "SELECT parent_path FROM global_songs WHERE parent_path LIKE ? ORDER BY parent_path DESC LIMIT 1",
                 (f"{base_rel_path}/%",)
@@ -1113,11 +1112,13 @@ def get_top100():
 
             # 4. [핵심] 순위 정렬 로직: 파일명이나 아티스트명 앞의 숫자를 추출하여 정렬
             def get_rank(item):
+                # 파일명(stream_url)에서 숫자 추출 시도 (예: 001.곡명.flac)
                 url_path = urllib.parse.unquote(item.get('stream_url', ''))
                 filename = os.path.basename(url_path)
                 match = re.match(r'^(\d+)', filename)
                 if match: return int(match.group(1))
 
+                # 아티스트명 앞의 숫자 시도 (예: "001 가수")
                 match = re.match(r'^(\d+)', item.get('artist', ''))
                 if match: return int(match.group(1))
 
@@ -1141,6 +1142,7 @@ def search_songs():
     try:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
+            # 0 as is_dir을 추가하여 앱에서 '노래'로 정상 인식하게 함
             rows = conn.execute(
                 """SELECT name, artist, albumName, stream_url, parent_path, meta_poster,
                           genre, release_date, album_artist, 0 as is_dir
@@ -1165,6 +1167,7 @@ def refresh():
 def reset_fail():
     try:
         with sqlite3.connect(DB_PATH) as conn:
+            # 'FAIL'이나 빈 문자열인 항목을 모두 NULL로 초기화 (노래 단위)
             cursor = conn.execute(
                 "UPDATE global_songs SET meta_poster = NULL WHERE meta_poster = 'FAIL' OR meta_poster = ''")
             count = cursor.rowcount
@@ -1179,17 +1182,33 @@ def reset_fail():
         return jsonify({"status": "error", "message": error_msg})
 
 
+# 기존 run_query API가 이미 있다면 아래 코드로 교체하여
+# 에러 발생 시 상세 정보가 리턴되도록 개선합니다.
+# @app.route('/api/admin/query', methods=['POST'])
+# def run_query():
+#     sql = request.json.get('query')
+#     # SELECT 문만 허용하여 데이터 안전 보장
+#     if not sql.strip().upper().startswith("SELECT"):
+#         return jsonify({"error": "안전을 위해 SELECT 문만 실행 가능합니다."})
+#     try:
+#         with sqlite3.connect(DB_PATH, timeout=10) as conn:
+#             conn.row_factory = sqlite3.Row
+#             res = conn.execute(sql).fetchall()
+#             return jsonify([dict(r) for r in res])
+#     except Exception as e:
+#         return jsonify({"error": str(e)})
+
 @app.route('/api/metadata/status')
 def get_meta():
     res = up_st.copy()
     try:
         with sqlite3.connect(DB_PATH, timeout=5) as conn:
+            # 그룹화된 기준(가수, 앨범)으로 전체, 성공, 실패, 대기 건수를 한 번에 집계
             stats = conn.execute("""
                 SELECT
                     COUNT(*),
                     COUNT(CASE WHEN status = 'success' THEN 1 END),
-                    COUNT(CASE WHEN status = 'fail' THEN 1 END),
-                    COUNT(CASE WHEN status = 'pending' THEN 1 END)
+                    COUNT(CASE WHEN status = 'fail' THEN 1 END)
                 FROM (
                     SELECT
                         CASE
@@ -1201,18 +1220,72 @@ def get_meta():
                     GROUP BY artist, albumName
                 )
             """).fetchone()
-
             if stats:
                 res.update({
                     "db_total": stats[0] or 0,
                     "db_success": stats[1] or 0,
-                    "db_fail": stats[2] or 0,
-                    "db_pending": stats[3] or 0
+                    "db_fail": stats[2] or 0
                 })
-    except:
-        pass
+    except Exception as e:
+        print(f"Meta Status Error: {e}")
     return jsonify(res)
 
+
+@app.route('/api/library/artists/<folder_type>')
+def get_library_artists(folder_type):
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            # 아티스트명 앞뒤 공백 제거 및 대문자 통일 후 그룹화하여 중복 제거
+            rows = conn.execute(
+                """SELECT TRIM(artist) as clean_artist, MAX(meta_poster) as cover
+                   FROM global_songs
+                   WHERE parent_path LIKE ?
+                   AND artist IS NOT NULL
+                   AND artist != ''
+                   AND artist != 'Unknown Artist'
+                   GROUP BY UPPER(TRIM(artist))
+                   ORDER BY clean_artist ASC""",
+                (f"{folder_type}%",)
+            ).fetchall()
+
+            return jsonify([{"name": r['clean_artist'], "cover": r['cover']} for r in rows])
+    except Exception as e:
+        print(f"[!] 에러: {e}")
+        return jsonify([])
+
+# 1. 아티스트 그리드 페이징 API
+@app.route('/api/library/artists_paged/<folder_type>')
+def get_library_artists_paged(folder_type):
+    page = int(request.args.get('page', 1))
+    limit = 60 # 한 번에 60명씩 로드
+    offset = (page - 1) * limit
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT artist, MAX(meta_poster) as cover
+                   FROM global_songs
+                   WHERE parent_path LIKE ? AND artist != '' AND artist != 'Unknown Artist'
+                   GROUP BY UPPER(TRIM(artist))
+                   ORDER BY artist ASC LIMIT ? OFFSET ?""",
+                (f"{folder_type}%", limit, offset)
+            ).fetchall()
+            return jsonify([{"name": r['artist'], "cover": r['cover']} for r in rows])
+    except: return jsonify([])
+
+# 2. 가수별 음악 리스트 API (새로 생성)
+@app.route('/api/library/songs_by_artist/<artist_name>')
+def get_songs_by_artist(artist_name):
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM global_songs WHERE artist = ? ORDER BY albumName, name",
+                (artist_name,)
+            ).fetchall()
+            return jsonify([dict(r) for r in rows])
+    except: return jsonify([])
 
 @app.route('/stream/<path:fp>')
 def stream(fp): return send_from_directory(MUSIC_BASE, urllib.parse.unquote(fp))

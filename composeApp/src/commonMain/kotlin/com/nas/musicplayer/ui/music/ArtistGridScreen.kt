@@ -23,13 +23,28 @@ import coil3.compose.AsyncImage
 @Composable
 fun ArtistGridScreen(
     artists: List<com.nas.musicplayer.network.Artist>,
+    onLoadMore: () -> Unit,
     onArtistClick: (String) -> Unit,
     onBack: () -> Unit
 ) {
+    val listState = rememberLazyGridState()
+    
+    // 무한 스크롤 감지
+    val shouldLoadMore by remember {
+        derivedStateOf {
+            val lastVisibleItem = listState.layoutInfo.visibleItemsInfo.lastOrNull()
+            lastVisibleItem != null && lastVisibleItem.index >= artists.size - 6
+        }
+    }
+
+    LaunchedEffect(shouldLoadMore) {
+        if (shouldLoadMore) onLoadMore()
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("아티스트 (${artists.size}명)", fontWeight = FontWeight.Bold) },
+                title = { Text("아티스트", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) }
                 }
@@ -38,14 +53,15 @@ fun ArtistGridScreen(
     ) { padding ->
         if (artists.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("아티스트를 불러오는 중이거나 데이터가 없습니다.")
+                CircularProgressIndicator()
             }
         } else {
             LazyVerticalGrid(
-                columns = GridCells.Fixed(4), // 한 줄에 4개 배치
-                contentPadding = PaddingValues(8.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                state = listState,
+                columns = GridCells.Fixed(3),
+                contentPadding = PaddingValues(12.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.padding(padding)
             ) {
                 items(artists) { artist ->
@@ -57,7 +73,7 @@ fun ArtistGridScreen(
                             model = artist.cover,
                             contentDescription = artist.name,
                             modifier = Modifier
-                                .size(80.dp) // 한 줄에 4개이므로 사이즈 조정
+                                .size(100.dp)
                                 .shadow(4.dp, CircleShape)
                                 .clip(CircleShape),
                             contentScale = ContentScale.Crop
@@ -65,7 +81,7 @@ fun ArtistGridScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = artist.name, 
-                            style = MaterialTheme.typography.labelMedium,
+                            style = Modifier.run { MaterialTheme.typography.bodySmall },
                             fontWeight = FontWeight.Bold,
                             textAlign = TextAlign.Center,
                             maxLines = 1,

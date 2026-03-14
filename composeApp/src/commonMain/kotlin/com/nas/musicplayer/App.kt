@@ -54,7 +54,6 @@ fun App(
     val currentSong by musicPlayerViewModel.currentSong.collectAsState()
     val isPlaying by musicPlayerViewModel.isPlaying.collectAsState()
 
-    // 공통 삭제/다운로드 로직
     val onDeleteSong: (Song) -> Unit = { song ->
         val success = getFileDownloader().deleteFile(song.streamUrl ?: "")
         if (success) {
@@ -129,14 +128,12 @@ fun App(
                     }
                     composable("artist_grid/{folderType}") { backStackEntry ->
                         val folderType = backStackEntry.arguments?.getString("folderType") ?: "국내"
-                        val uiState by searchViewModel.uiState.collectAsState()
-                        
                         LaunchedEffect(folderType) {
-                            searchViewModel.loadArtists(folderType)
+                            searchViewModel.loadArtistsPaged(folderType, isRefresh = true)
                         }
-                        
                         ArtistGridScreen(
-                            artists = uiState.artistGrid,
+                            artists = searchViewModel.artistGrid,
+                            onLoadMore = { searchViewModel.loadArtistsPaged(folderType) },
                             onArtistClick = { artistName -> navController.navigate("artist_detail/$artistName") },
                             onBack = { navController.popBackStack() }
                         )

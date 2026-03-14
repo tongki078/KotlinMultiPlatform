@@ -1,23 +1,20 @@
 package com.nas.musicplayer.ui.music
 
+import androidx.compose.runtime.mutableStateListOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewModelScope
-import com.nas.musicplayer.Album
-import com.nas.musicplayer.Artist
-import com.nas.musicplayer.Song
-import com.nas.musicplayer.MusicRepository
+import com.nas.musicplayer.*
 import com.nas.musicplayer.db.RecentSearch
-import com.nas.musicplayer.network.MusicApiServiceImpl
-import com.nas.musicplayer.network.httpClient
-import com.nas.musicplayer.network.toSongList
+import com.nas.musicplayer.network.*
 import com.nas.musicplayer.network.Artist as NetworkArtist
 import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.http.takeFrom
 import io.ktor.http.appendPathSegments
+import io.ktor.http.encodeURLPath
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
@@ -47,15 +44,14 @@ data class MusicSearchUiState(
     val genreThemes: List<Theme> = emptyList(),
     val isLoading: Boolean = false,
     val searchQuery: String = "",
-    val selectedArtist: Artist? = null,
+    val selectedArtist: com.nas.musicplayer.Artist? = null,
     val isArtistLoading: Boolean = false,
     val selectedAlbum: Album? = null,
     val isAlbumLoading: Boolean = false,
     val recentSearches: List<RecentSearch> = emptyList(),
     val albums: List<Album> = emptyList(),
     val downloadingSongIds: Set<Long> = emptySet(),
-    val downloadedSongKeys: Set<String> = emptySet(),
-    val artistGrid: List<NetworkArtist> = emptyList() // 아티스트 그리드용 데이터
+    val downloadedSongKeys: Set<String> = emptySet()
 )
 
 class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel() {
@@ -66,6 +62,13 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
 
     private val _uiState = MutableStateFlow(MusicSearchUiState())
     val uiState: StateFlow<MusicSearchUiState> = _uiState.asStateFlow()
+
+    // 페이징 관리용
+    val artistGrid = mutableStateListOf<NetworkArtist>()
+    private var artistPage = 1
+    private var currentFolderType = ""
+    private var isLastPage = false
+    private var isPagingLoading = false
 
     init {
         loadTop100()
@@ -85,14 +88,59 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         }
     }
 
-    // 아티스트 그리드 데이터 로드
-    fun loadArtists(folderType: String) {
+    fun loadArtistsPaged(folderType: String, isRefresh: Boolean = false) {
+        if (isPagingLoading) return
+        
+        if (isRefresh || folderType != currentFolderType) {
+            artistPage = 1
+            artistGrid.clear()
+            currentFolderType = folderType
+            isLastPage = false
+        }
+        
+        if (isLastPage) return
+
+        isPagingLoading = true
         viewModelScope.launch {
             try {
-                val response = httpClient.get("$pythonBaseUrl/api/library/artists/$folderType").body<List<NetworkArtist>>()
-                _uiState.update { it.copy(artistGrid = response) }
+                val response = httpClient.get("$pythonBaseUrl/api/library/artists_paged/$folderType") {
+                    parameter("page", artistPage)
+                }.body<List<NetworkArtist>>()
+                
+                if (response.isEmpty()) {
+                    isLastPage = true
+                } else {
+                    artistGrid.addAll(response)
+                    artistPage++
+                }
             } catch (e: Exception) {
                 println("Failed to load artists: ${e.message}")
+            } finally {
+                isPagingLoading = false
+            }
+        }
+    }
+
+    fun loadArtistDetails(artistName: String, fallbackImageUrl: String? = null) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isArtistLoading = true) }
+            try {
+                val songs = httpClient.get("$pythonBaseUrl/api/library/songs_by_artist/${artistName.encodeURLPath()}").body<List<Song>>()
+                val pythonSongs = songs.map { cleanSongInfo(it) }
+                
+                val artistInfo = com.nas.musicplayer.Artist(
+                    id = artistName.hashCode().toLong(),
+                    name = artistName,
+                    profileImageRes = null,
+                    imageUrl = fallbackImageUrl ?: pythonSongs.firstOrNull { !it.metaPoster.isNullOrBlank() && it.metaPoster != "FAIL" }?.metaPoster,
+                    followers = "0",
+                    popularSongs = pythonSongs,
+                    albums = emptyList()
+                )
+                _uiState.update { it.copy(selectedArtist = artistInfo, isArtistLoading = false) }
+            } catch (e: Exception) {
+                println("Artist Details Load Error: ${e.message}")
+                _uiState.update { it.copy(isArtistLoading = false) }
             }
         }
     }
@@ -254,30 +302,6 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
     fun clearAllRecentSearches() {
         viewModelScope.launch {
             repository.clearAllRecentSearches()
-        }
-    }
-
-    fun loadArtistDetails(artistName: String, fallbackImageUrl: String? = null) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isArtistLoading = true) }
-            try {
-                val relatedSongs = musicApiService.search(artistName).toSongList()
-                    .filter { !it.isDir }
-                    .map { cleanSongInfo(it) }
-                    .filter { it.artist.contains(artistName, ignoreCase = true) }
-                    .distinctBy { it.name }
-                
-                val artistInfo = Artist(
-                    name = artistName,
-                    imageUrl = fallbackImageUrl ?: relatedSongs.firstOrNull()?.metaPoster,
-                    popularSongs = relatedSongs
-                )
-                _uiState.update {
-                    it.copy(selectedArtist = artistInfo, isArtistLoading = false)
-                }
-            } catch (e: Exception) {
-                _uiState.update { it.copy(isArtistLoading = false) }
-            }
         }
     }
 
