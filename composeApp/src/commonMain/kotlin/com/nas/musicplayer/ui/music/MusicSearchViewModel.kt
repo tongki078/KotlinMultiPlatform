@@ -53,6 +53,7 @@ data class MusicSearchUiState(
     val artistThemes: List<Theme> = emptyList(),
     val genreThemes: List<Theme> = emptyList(),
     val isLoading: Boolean = false,
+    val isTop100Loading: Boolean = false, // 멜론 차트 전용 로딩 상태 추가
     val searchQuery: String = "",
     val selectedArtist: com.nas.musicplayer.Artist? = null,
     val isArtistLoading: Boolean = false,
@@ -79,8 +80,10 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
     private var isPagingLoading = false
 
     init {
-        loadTop100()
+        // 데이터 로드 순서 명확히 정의
         loadThemes()
+        loadTop100()
+        
         viewModelScope.launch {
             repository.recentSearches.collect { searches ->
                 _uiState.update { it.copy(recentSearches = searches) }
@@ -89,8 +92,8 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
     }
 
     companion object {
-        fun Factory(repository: MusicRepository): ViewModelProvider.Factory = viewModelFactory {
-            initializer { MusicSearchViewModel(repository) }
+        fun Factory(musicRepository: MusicRepository): ViewModelProvider.Factory = viewModelFactory {
+            initializer { MusicSearchViewModel(musicRepository) }
         }
     }
 
@@ -130,11 +133,12 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
             _uiState.update { it.copy(isAlbumLoading = true, selectedAlbum = null) }
             try {
                 val songs = httpClient.get("$pythonBaseUrl/api/library/songs_by_album/${artistName.encodeURLPath()}/${albumName.encodeURLPath()}").body<List<Song>>()
+                val cleanedSongs = songs.map { cleanSongInfo(it) }
                 val albumInfo = Album(
                     name = albumName,
                     artist = artistName,
-                    songs = songs.map { cleanSongInfo(it) },
-                    imageUrl = songs.firstOrNull { !it.metaPoster.isNullOrBlank() && it.metaPoster != "FAIL" }?.metaPoster
+                    songs = cleanedSongs,
+                    imageUrl = cleanedSongs.firstOrNull { !it.metaPoster.isNullOrBlank() && it.metaPoster != "FAIL" }?.metaPoster
                 )
                 _uiState.update { it.copy(selectedAlbum = albumInfo, isAlbumLoading = false) }
             } catch (e: Exception) { _uiState.update { it.copy(isAlbumLoading = false) } }
@@ -142,12 +146,17 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
     }
 
     fun loadTop100() {
+        if (_uiState.value.isTop100Loading) return
+        
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, top100Songs = emptyList()) }
+            _uiState.update { it.copy(isTop100Loading = true) }
             try {
                 val response = httpClient.get("$pythonBaseUrl/api/top100").body<List<Song>>()
-                _uiState.update { it.copy(top100Songs = response.map { cleanSongInfo(it) }, isLoading = false) }
-            } catch (e: Exception) { _uiState.update { it.copy(isLoading = false) } }
+                val songs = response.map { cleanSongInfo(it) }
+                _uiState.update { it.copy(top100Songs = songs, isTop100Loading = false) }
+            } catch (e: Exception) { 
+                _uiState.update { it.copy(isTop100Loading = false) }
+            }
         }
     }
 
@@ -162,7 +171,6 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
                     parameter("q", trimmedQuery) 
                 }.body<IntegratedSearchResponse>()
                 
-                // [중요] 중복 제거 기준을 id로 변경하여 다른 노래가 같은 제목으로 인해 사라지는 것 방지
                 val finalResult = response.songs.map { cleanSongInfo(it) }.distinctBy { it.id }
                 
                 _uiState.update { it.copy(
@@ -196,7 +204,6 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
             song.copy(name = cleanName, isDir = false)
         }
 
-        // [Fix] ID가 0인 경우에만 생성하고, 서버에서 준 ID가 있다면 보존합니다.
         return if (cleaned.id == 0L) {
             val uniqueKey = "${cleaned.artist}-${cleaned.name}-${cleaned.streamUrl}"
             cleaned.copy(id = uniqueKey.hashCode().toLong())
@@ -214,7 +221,19 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
     private fun generateMatchKey(artist: String, title: String): String = "${artist.replace(Regex("[^a-zA-Z0-9가-힣]"), "").lowercase()}-${title.replace(Regex("[^a-zA-Z0-9가-힣]"), "").lowercase()}"
     fun startDownloading(id: Long) { _uiState.update { it.copy(downloadingSongIds = it.downloadingSongIds + id) } }
     fun stopDownloading(id: Long) { _uiState.update { it.copy(downloadingSongIds = it.downloadingSongIds - id) } }
-    fun loadThemes() { viewModelScope.launch { try { val res = httpClient.get("$pythonBaseUrl/api/themes").body<ThemeResponse>(); _uiState.update { it.copy(themes = res.charts, collectionThemes = res.collections, artistThemes = res.artists, genreThemes = res.genres) } } catch(e: Exception){} } }
+    fun loadThemes() { 
+        viewModelScope.launch { 
+            try { 
+                val res = httpClient.get("$pythonBaseUrl/api/themes").body<ThemeResponse>()
+                _uiState.update { it.copy(
+                    themes = res.charts, 
+                    collectionThemes = res.collections, 
+                    artistThemes = res.artists, 
+                    genreThemes = res.genres
+                ) } 
+            } catch(e: Exception){} 
+        } 
+    }
     fun deleteRecentSearch(q: String) { viewModelScope.launch { repository.deleteRecentSearch(q) } }
     fun clearAllRecentSearches() { viewModelScope.launch { repository.clearAllRecentSearches() } }
     fun loadThemeDetails(t: Theme) {

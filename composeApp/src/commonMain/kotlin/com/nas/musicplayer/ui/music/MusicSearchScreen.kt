@@ -51,7 +51,7 @@ fun MusicSearchScreen(
     onNavigateToAlbum: (Album) -> Unit,
     onNavigateToTheme: (Theme) -> Unit,
     onNavigateToArtistGrid: (String) -> Unit,
-    onSongClick: (Song) -> Unit,
+    onSongClick: (Song, List<Song>) -> Unit, // List<Song> 추가
     onNavigateToPlaylists: () -> Unit,
     onVoiceSearchClick: () -> Unit,
     onDownloadSong: (Song) -> Unit,
@@ -74,7 +74,6 @@ fun MusicSearchScreen(
 
     val primaryColor = MaterialTheme.colorScheme.primary
 
-    // [Fix] 앱 시작 시 자동 포커스 방지 (메인 화면 보존)
     LaunchedEffect(Unit) {
         focusManager.clearFocus()
     }
@@ -89,7 +88,6 @@ fun MusicSearchScreen(
         modifier = Modifier.fillMaxSize().statusBarsPadding().padding(bottom = bottomPadding).imePadding()
             .pointerInput(Unit) { detectTapGestures(onTap = { focusManager.clearFocus() }) }
     ) {
-        // 상단 바 (검색 + 보관함 아이콘)
         Row(
             modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -131,17 +129,12 @@ fun MusicSearchScreen(
         }
 
         Box(modifier = Modifier.weight(1f)) {
-            // [통합 검색 레이아웃] 검색 모드일 때
             if (isSearchFocused || uiState.searchQuery.isNotEmpty()) {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    // 1. 아티스트 섹션 (애플뮤직 스타일)
                     if (uiState.searchArtists.isNotEmpty()) {
                         item { SearchSectionTitle("아티스트") }
                         item {
-                            LazyRow(
-                                contentPadding = PaddingValues(horizontal = 16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp)
-                            ) {
+                            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                 items(uiState.searchArtists) { artist ->
                                     Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -153,63 +146,39 @@ fun MusicSearchScreen(
                                             modifier = Modifier.size(80.dp).clip(CircleShape).background(Color.Gray.copy(alpha = 0.1f)),
                                             contentScale = ContentScale.Crop
                                         )
-                                        Text(
-                                            text = artist.name,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            maxLines = 1,
-                                            textAlign = TextAlign.Center,
-                                            modifier = Modifier.padding(top = 8.dp)
-                                        )
+                                        Text(artist.name, style = MaterialTheme.typography.labelMedium, maxLines = 1, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp))
                                     }
                                 }
                             }
                         }
                     }
 
-                    // 2. 앨범 섹션 (가로 스크롤)
                     if (uiState.searchAlbums.isNotEmpty()) {
                         item { SearchSectionTitle("앨범") }
                         item {
-                            LazyRow(
-                                contentPadding = PaddingValues(horizontal = 16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
+                            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 items(uiState.searchAlbums) { album ->
-                                    Column(
-                                        modifier = Modifier.width(130.dp).clickable { onNavigateToAlbum(album) }
-                                    ) {
+                                    Column(modifier = Modifier.width(130.dp).clickable { onNavigateToAlbum(album) }) {
                                         AsyncImage(
                                             model = album.imageUrl,
                                             contentDescription = null,
                                             modifier = Modifier.size(130.dp).clip(RoundedCornerShape(8.dp)).background(Color.Gray.copy(alpha = 0.1f)),
                                             contentScale = ContentScale.Crop
                                         )
-                                        Text(
-                                            text = album.name,
-                                            style = MaterialTheme.typography.labelLarge,
-                                            maxLines = 1,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(top = 6.dp)
-                                        )
-                                        Text(
-                                            text = album.artist,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color.Gray,
-                                            maxLines = 1
-                                        )
+                                        Text(album.name, style = MaterialTheme.typography.labelLarge, maxLines = 1, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
+                                        Text(album.artist, style = MaterialTheme.typography.labelSmall, color = Color.Gray, maxLines = 1)
                                     }
                                 }
                             }
                         }
                     }
 
-                    // 3. 노래 섹션 (세로 리스트)
                     if (uiState.searchResults.isNotEmpty()) {
                         item { SearchSectionTitle("노래") }
                         items(uiState.searchResults, key = { it.id.toString() + it.name + it.artist }) { song ->
                             SongListItem(
                                 song = song,
-                                onItemClick = { onSongClick(song) },
+                                onItemClick = { onSongClick(song, uiState.searchResults) }, // 리스트 전달
                                 onMoreClick = { selectedSongForSheet = song; scope.launch { sheetState.show() } },
                                 isDownloading = downloadingSongIds.contains(song.id),
                                 isDownloaded = viewModel.isSongDownloaded(song)
@@ -218,17 +187,12 @@ fun MusicSearchScreen(
                     } else if (!uiState.isLoading) {
                         item {
                             Box(modifier = Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(Icons.Default.Search, null, modifier = Modifier.size(64.dp), tint = Color.Gray.copy(alpha = 0.3f))
-                                    Spacer(modifier = Modifier.height(16.dp))
-                                    Text(if(uiState.searchQuery.isEmpty()) "검색어를 입력해 주세요." else "검색 결과가 없습니다.", color = Color.Gray)
-                                }
+                                Text(if(uiState.searchQuery.isEmpty()) "검색어를 입력해 주세요." else "검색 결과가 없습니다.", color = Color.Gray)
                             }
                         }
                     }
                 }
             } else {
-                // 평상시 메인 화면 (추천 테마들)
                 LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
                     if (uiState.themes.isNotEmpty()) {
                         item { ThemeSection(title = "추천 차트", themes = uiState.themes, onNavigateToTheme = onNavigateToTheme) }
@@ -245,6 +209,26 @@ fun MusicSearchScreen(
                                 genres = uiState.genreThemes, 
                                 onGenreClick = { theme -> onNavigateToArtistGrid(theme.name) }
                             ) 
+                        }
+                    }
+                    
+                    if (uiState.top100Songs.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = "멜론 주간 TOP 100",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(start = 16.dp, top = 24.dp, bottom = 12.dp)
+                            )
+                        }
+                        items(uiState.top100Songs, key = { it.id.toString() + it.name + it.artist }) { song ->
+                            SongListItem(
+                                song = song,
+                                onItemClick = { onSongClick(song, uiState.top100Songs) }, // 리스트 전달
+                                onMoreClick = { selectedSongForSheet = song; scope.launch { sheetState.show() } },
+                                isDownloading = downloadingSongIds.contains(song.id),
+                                isDownloaded = viewModel.isSongDownloaded(song)
+                            )
                         }
                     }
                 }

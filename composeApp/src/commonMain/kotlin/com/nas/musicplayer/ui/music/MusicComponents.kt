@@ -2,8 +2,10 @@ package com.nas.musicplayer.ui.music
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -24,6 +26,8 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.nas.musicplayer.Song
@@ -78,32 +82,48 @@ fun SongListItem(
                 horizontalArrangement = Arrangement.End
             ) {
                 if (isDownloading) {
-                    Icon(
-                        Icons.Default.Sync, 
-                        null, 
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp).rotate(rotation)
-                    )
+                    Icon(Icons.Default.Sync, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp).rotate(rotation))
                     Spacer(modifier = Modifier.width(4.dp))
                 } else if (isDownloaded) {
-                    Icon(
-                        Icons.Default.DownloadDone, 
-                        null, 
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
-                    )
+                    Icon(Icons.Default.DownloadDone, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                 }
-                
-                IconButton(
-                    onClick = onMoreClick,
-                    modifier = Modifier.size(40.dp)
-                ) {
+                IconButton(onClick = onMoreClick, modifier = Modifier.size(40.dp)) {
                     Icon(Icons.Default.MoreVert, null, tint = Color.Gray)
                 }
             }
         }
         HorizontalDivider(modifier = Modifier.padding(start = 88.dp, end = 16.dp), thickness = 0.5.dp, color = Color.LightGray.copy(alpha = 0.5f))
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun SongCardItem(
+    song: Song, 
+    onClick: () -> Unit, 
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier.aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(Color.Gray.copy(alpha = 0.1f)),
+            contentAlignment = Alignment.Center
+        ) {
+            val imageModel = remember(song.metaPoster) {
+                if (!song.metaPoster.isNullOrBlank() && song.metaPoster != "FAIL") song.metaPoster else null
+            }
+            AsyncImage(model = imageModel, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(text = song.name ?: "제목 없음", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text(text = song.artist, style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 
@@ -124,56 +144,21 @@ fun MoreOptionsSheet(
             supportingContent = { Text(song.artist) },
             leadingContent = { 
                 val imageModel = remember(song.metaPoster) {
-                    if (song.metaPoster != null && song.metaPoster != "FAIL" && song.metaPoster.startsWith("http")) {
-                        song.metaPoster
-                    } else {
-                        null
-                    }
+                    if (song.metaPoster != null && song.metaPoster != "FAIL" && song.metaPoster.startsWith("http")) song.metaPoster else null
                 }
-                AsyncImage(
-                    model = imageModel, 
-                    contentDescription = null, 
-                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)).background(Color.Gray.copy(alpha = 0.1f)), 
-                    contentScale = ContentScale.Crop
-                ) 
+                AsyncImage(model = imageModel, contentDescription = null, modifier = Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)).background(Color.Gray.copy(alpha = 0.1f)), contentScale = ContentScale.Crop) 
             },
             colors = ListItemDefaults.colors(containerColor = Color.Transparent)
         )
         HorizontalDivider(color = Color.LightGray.copy(alpha = 0.3f))
         
         if (isDownloaded || onDeleteClick != null) {
-            ListItem(
-                headlineContent = { Text("보관함에서 삭제", color = MaterialTheme.colorScheme.error) }, 
-                leadingContent = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) }, 
-                modifier = Modifier.clickable { onDeleteClick?.invoke() },
-                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-            )
+            ListItem(headlineContent = { Text("보관함에서 삭제", color = MaterialTheme.colorScheme.error) }, leadingContent = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) }, modifier = Modifier.clickable { onDeleteClick?.invoke() }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
         } else {
-            ListItem(
-                headlineContent = { Text("다운로드") }, 
-                leadingContent = { Icon(Icons.Default.Download, null, tint = primaryColor) }, 
-                modifier = Modifier.clickable { onDownloadClick() },
-                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-            )
+            ListItem(headlineContent = { Text("다운로드") }, leadingContent = { Icon(Icons.Default.Download, null, tint = primaryColor) }, modifier = Modifier.clickable { onDownloadClick() }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
         }
-
-        ListItem(
-            headlineContent = { Text("플레이리스트에 추가") }, 
-            leadingContent = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, null, tint = primaryColor) }, 
-            modifier = Modifier.clickable { onNavigateToAddToPlaylist(song) },
-            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-        )
-        ListItem(
-            headlineContent = { Text("아티스트 보기") }, 
-            leadingContent = { Icon(Icons.Default.Person, null, tint = primaryColor) }, 
-            modifier = Modifier.clickable { onNavigateToArtist() },
-            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-        )
-        ListItem(
-            headlineContent = { Text("앨범 보기") }, 
-            leadingContent = { Icon(Icons.Default.Album, null, tint = primaryColor) }, 
-            modifier = Modifier.clickable { onNavigateToAlbum() },
-            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-        )
+        ListItem(headlineContent = { Text("플레이리스트에 추가") }, leadingContent = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, null, tint = primaryColor) }, modifier = Modifier.clickable { onNavigateToAddToPlaylist(song) }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
+        ListItem(headlineContent = { Text("아티스트 보기") }, leadingContent = { Icon(Icons.Default.Person, null, tint = primaryColor) }, modifier = Modifier.clickable { onNavigateToArtist() }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
+        ListItem(headlineContent = { Text("앨범 보기") }, leadingContent = { Icon(Icons.Default.Album, null, tint = primaryColor) }, modifier = Modifier.clickable { onNavigateToAlbum() }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
     }
 }
