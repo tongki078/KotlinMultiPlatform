@@ -1,5 +1,8 @@
 package com.nas.musicplayer
 
+import kotlinx.serialization.Serializable
+
+@Serializable
 data class Album(
     val name: String,
     val artist: String,

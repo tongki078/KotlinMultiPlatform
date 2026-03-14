@@ -1287,6 +1287,50 @@ def get_songs_by_artist(artist_name):
             return jsonify([dict(r) for r in rows])
     except: return jsonify([])
 
+# [수정/추가] 특정 가수의 앨범 목록을 가져오는 API
+# [수정] 특정 가수의 앨범 목록을 가져오는 API (앱 모델과 필드명 동기화)
+@app.route('/api/library/albums_by_artist/<artist_name>')
+def get_albums_by_artist(artist_name):
+    try:
+        name = urllib.parse.unquote(artist_name)
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            # 앨범명(name), 이미지(imageUrl), 연도(year) 필드명을 앱 모델과 일치시킴
+            # UPPER(TRIM())을 사용하여 공백이나 대소문자 차이로 인한 검색 실패 방지
+            rows = conn.execute(
+                """SELECT albumName as name, artist, MAX(meta_poster) as imageUrl, MAX(release_date) as year
+                   FROM global_songs
+                   WHERE UPPER(TRIM(artist)) = UPPER(TRIM(?))
+                   GROUP BY albumName
+                   ORDER BY year DESC""",
+                (name,)
+            ).fetchall()
+
+            result = [dict(r) for r in rows]
+            print(f"[*] {name}의 앨범 조회 성공: {len(result)}개 발견")
+            return jsonify(result)
+    except Exception as e:
+        print(f"[!] 앨범 조회 에러: {e}")
+    return jsonify([])
+
+
+# [수정] 특정 앨범의 곡 목록을 가져오는 API
+@app.route('/api/library/songs_by_album/<artist_name>/<album_name>')
+def get_songs_by_album(artist_name, album_name):
+    try:
+        art = urllib.parse.unquote(artist_name)
+        alb = urllib.parse.unquote(album_name)
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM global_songs WHERE UPPER(TRIM(artist)) = UPPER(TRIM(?)) AND UPPER(TRIM(albumName)) = UPPER(TRIM(?)) ORDER BY name",
+                (art, alb)
+            ).fetchall()
+            return jsonify([dict(r) for r in rows])
+    except Exception as e:
+        print(f"[!] 곡 목록 조회 에러: {e}")
+        return jsonify([])
+
 @app.route('/stream/<path:fp>')
 def stream(fp): return send_from_directory(MUSIC_BASE, urllib.parse.unquote(fp))
 

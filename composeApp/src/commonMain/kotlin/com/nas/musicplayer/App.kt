@@ -203,8 +203,14 @@ fun App(
                         val artistName = backStackEntry.arguments?.getString("artistName") ?: ""
                         LaunchedEffect(artistName) { searchViewModel.loadArtistDetails(artistName) }
                         if (uiState.isArtistLoading && uiState.selectedArtist == null) MusicLoadingScreen()
-                        else uiState.selectedArtist?.let {
-                            ArtistDetailScreen(it, { navController.popBackStack() }, { s, l -> musicPlayerViewModel.playSong(s, l) }, { l -> if(l.isNotEmpty()) musicPlayerViewModel.playSong(l[0], l) }, onDownloadSong, uiState.downloadingSongIds)
+                        else uiState.selectedArtist?.let { artist ->
+                            ArtistDetailScreen(
+                                artist = artist,
+                                onBack = { navController.popBackStack() },
+                                onAlbumClick = { album ->
+                                    navController.navigate("album_detail/${album.name}/${artist.name}")
+                                }
+                            )
                         }
                     }
                     composable("player") {

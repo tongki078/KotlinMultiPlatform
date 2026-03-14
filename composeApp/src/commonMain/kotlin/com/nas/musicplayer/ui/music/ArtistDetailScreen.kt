@@ -1,206 +1,81 @@
 package com.nas.musicplayer.ui.music
 
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Shuffle
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.nas.musicplayer.Artist
-import com.nas.musicplayer.Song
-import kotlinx.coroutines.launch
+import com.nas.musicplayer.Album
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ArtistDetailScreen(
     artist: Artist,
     onBack: () -> Unit,
-    onSongClick: (Song, List<Song>) -> Unit,
-    onPlayAllClick: (List<Song>) -> Unit,
-    onDownloadSong: (Song) -> Unit,
-    downloadingSongIds: Set<Long> = emptySet() // 추가
+    onAlbumClick: (Album) -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState()
-    val scope = rememberCoroutineScope()
-    var selectedSongForSheet by remember { mutableStateOf<Song?>(null) }
-
-    val infiniteTransition = rememberInfiniteTransition()
-    val rotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        )
-    )
-
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { },
+                title = { Text(artist.name, fontWeight = FontWeight.Bold) },
                 navigationIcon = {
-                    IconButton(
-                        onClick = onBack,
-                        colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Black.copy(alpha = 0.3f))
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) }
+                }
             )
         }
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 100.dp)
-        ) {
-            item {
-                Box(modifier = Modifier.fillMaxWidth().height(300.dp)) {
-                    AsyncImage(
-                        model = artist.imageUrl ?: artist.profileImageRes,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f)),
-                                    startY = 100f
-                                )
-                            )
-                    )
+        if (artist.albums.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                Text("앨범 정보를 불러올 수 없습니다.")
+            }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.padding(padding)
+            ) {
+                items(artist.albums) { album ->
                     Column(
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(24.dp)
+                        modifier = Modifier.clickable { onAlbumClick(album) }
                     ) {
+                        AsyncImage(
+                            model = album.imageUrl,
+                            contentDescription = album.name,
+                            modifier = Modifier
+                                .aspectRatio(1f)
+                                .clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = artist.name,
-                            style = MaterialTheme.typography.displaySmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
+                            text = album.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "팬 ${artist.followers}명",
-                            style = MaterialTheme.typography.bodyMedium.copy(color = Color.White.copy(alpha = 0.8f))
+                            text = if (album.year > 0) "${album.year}년" else "앨범",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             }
-
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Button(
-                        onClick = { onPlayAllClick(artist.popularSongs) },
-                        modifier = Modifier.weight(1f).height(50.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                    ) {
-                        Icon(Icons.Default.PlayArrow, null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("재생", fontWeight = FontWeight.Bold)
-                    }
-                    OutlinedButton(
-                        onClick = { onPlayAllClick(artist.popularSongs.shuffled()) },
-                        modifier = Modifier.weight(1f).height(50.dp),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Default.Shuffle, null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("셔플", fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-
-            item {
-                Text(
-                    "인기 곡",
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
-                )
-            }
-
-            itemsIndexed(artist.popularSongs) { index, song ->
-                val isDownloading = downloadingSongIds.contains(song.id)
-                ListItem(
-                    headlineContent = { Text(song.name ?: "Unknown", fontWeight = FontWeight.Medium) },
-                    supportingContent = { Text(song.albumName) },
-                    leadingContent = {
-                        Text("${index + 1}", modifier = Modifier.width(20.dp), color = Color.Gray)
-                    },
-                    trailingContent = {
-                        if (isDownloading) {
-                            Icon(
-                                Icons.Default.Sync, 
-                                null, 
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp).rotate(rotation)
-                            )
-                        } else {
-                            IconButton(onClick = {
-                                selectedSongForSheet = song
-                                scope.launch { sheetState.show() }
-                            }) {
-                                Icon(Icons.Default.MoreVert, null, tint = Color.Gray)
-                            }
-                        }
-                    },
-                    modifier = Modifier.clickable { onSongClick(song, artist.popularSongs) }
-                )
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp, color = Color.LightGray.copy(alpha = 0.3f))
-            }
-        }
-    }
-
-    if (selectedSongForSheet != null) {
-        val currentSong = selectedSongForSheet!!
-        ModalBottomSheet(
-            onDismissRequest = { selectedSongForSheet = null },
-            sheetState = sheetState
-        ) {
-            MoreOptionsSheet(
-                song = currentSong,
-                onNavigateToArtist = { /* App.kt 연동 */ },
-                onNavigateToAddToPlaylist = { /* App.kt 연동 */ },
-                onNavigateToAlbum = { /* App.kt 연동 */ },
-                onDownloadClick = {
-                    scope.launch {
-                        sheetState.hide()
-                        selectedSongForSheet = null
-                        onDownloadSong(currentSong)
-                    }
-                }
-            )
         }
     }
 }
