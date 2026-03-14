@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -73,7 +74,7 @@ fun MusicSearchScreen(
 
     val primaryColor = MaterialTheme.colorScheme.primary
 
-    // [Fix] 앱 시작 시 자동 포커스 방지
+    // [Fix] 앱 시작 시 자동 포커스 방지 (메인 화면 보존)
     LaunchedEffect(Unit) {
         focusManager.clearFocus()
     }
@@ -130,11 +131,81 @@ fun MusicSearchScreen(
         }
 
         Box(modifier = Modifier.weight(1f)) {
-            // [개선] 실제로 검색 중이거나 검색어가 입력되었을 때만 검색 모드 UI 표시
+            // [통합 검색 레이아웃] 검색 모드일 때
             if (isSearchFocused || uiState.searchQuery.isNotEmpty()) {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    // 검색 결과가 있을 때만 노래 리스트 표시
+                    // 1. 아티스트 섹션 (애플뮤직 스타일)
+                    if (uiState.searchArtists.isNotEmpty()) {
+                        item { SearchSectionTitle("아티스트") }
+                        item {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                items(uiState.searchArtists) { artist ->
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier.width(90.dp).clickable { onNavigateToArtist(Artist(name = artist.name)) }
+                                    ) {
+                                        AsyncImage(
+                                            model = artist.cover,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(80.dp).clip(CircleShape).background(Color.Gray.copy(alpha = 0.1f)),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                        Text(
+                                            text = artist.name,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            maxLines = 1,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.padding(top = 8.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 2. 앨범 섹션 (가로 스크롤)
+                    if (uiState.searchAlbums.isNotEmpty()) {
+                        item { SearchSectionTitle("앨범") }
+                        item {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                items(uiState.searchAlbums) { album ->
+                                    Column(
+                                        modifier = Modifier.width(130.dp).clickable { onNavigateToAlbum(album) }
+                                    ) {
+                                        AsyncImage(
+                                            model = album.imageUrl,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(130.dp).clip(RoundedCornerShape(8.dp)).background(Color.Gray.copy(alpha = 0.1f)),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                        Text(
+                                            text = album.name,
+                                            style = MaterialTheme.typography.labelLarge,
+                                            maxLines = 1,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(top = 6.dp)
+                                        )
+                                        Text(
+                                            text = album.artist,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color.Gray,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 3. 노래 섹션 (세로 리스트)
                     if (uiState.searchResults.isNotEmpty()) {
+                        item { SearchSectionTitle("노래") }
                         items(uiState.searchResults, key = { it.id.toString() + it.name + it.artist }) { song ->
                             SongListItem(
                                 song = song,
@@ -145,7 +216,6 @@ fun MusicSearchScreen(
                             )
                         }
                     } else if (!uiState.isLoading) {
-                        // 결과가 없거나 입력 대기 중일 때
                         item {
                             Box(modifier = Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -158,7 +228,7 @@ fun MusicSearchScreen(
                     }
                 }
             } else {
-                // 평상시 메인 화면 (추천 테마들 + 멜론 차트)
+                // 평상시 메인 화면 (추천 테마들)
                 LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
                     if (uiState.themes.isNotEmpty()) {
                         item { ThemeSection(title = "추천 차트", themes = uiState.themes, onNavigateToTheme = onNavigateToTheme) }
@@ -177,31 +247,11 @@ fun MusicSearchScreen(
                             ) 
                         }
                     }
-                    
-                    if (uiState.top100Songs.isNotEmpty()) {
-                        item {
-                            Text(
-                                text = "멜론 주간 TOP 100",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(start = 16.dp, top = 24.dp, bottom = 12.dp)
-                            )
-                        }
-                        items(uiState.top100Songs, key = { it.id.toString() + it.name + it.artist }) { song ->
-                            SongListItem(
-                                song = song,
-                                onItemClick = { onSongClick(song) },
-                                onMoreClick = { selectedSongForSheet = song; scope.launch { sheetState.show() } },
-                                isDownloading = downloadingSongIds.contains(song.id),
-                                isDownloaded = viewModel.isSongDownloaded(song)
-                            )
-                        }
-                    }
                 }
             }
             
             if (uiState.isLoading) {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background.copy(alpha = 0.9f)) {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background.copy(alpha = 0.9f)) { 
                     MusicLoadingScreen() 
                 }
             }
@@ -223,6 +273,16 @@ fun MusicSearchScreen(
             )
         }
     }
+}
+
+@Composable
+fun SearchSectionTitle(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.titleLarge,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(start = 16.dp, top = 24.dp, bottom = 12.dp)
+    )
 }
 
 @Composable
@@ -293,64 +353,6 @@ fun ThemeSection(title: String, themes: List<Theme>, onNavigateToTheme: (Theme) 
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(themes) { theme -> ThemeItem(theme = theme, onClick = { onNavigateToTheme(theme) }) }
         }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun SongCardItem(
-    song: Song, 
-    onClick: () -> Unit, 
-    onLongClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .aspectRatio(1f)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color.Gray.copy(alpha = 0.1f)),
-            contentAlignment = Alignment.Center
-        ) {
-            val imageModel = remember(song.metaPoster) {
-                if (!song.metaPoster.isNullOrBlank() && song.metaPoster != "FAIL") {
-                    song.metaPoster
-                } else {
-                    null
-                }
-            }
-            AsyncImage(
-                model = imageModel, 
-                contentDescription = null, 
-                modifier = Modifier.fillMaxSize(), 
-                contentScale = ContentScale.Crop
-            )
-        }
-        Spacer(modifier = Modifier.height(10.dp))
-        Text(
-            text = song.name ?: "제목 없음", 
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), 
-            maxLines = 1, 
-            overflow = TextOverflow.Ellipsis, 
-            modifier = Modifier.fillMaxWidth(),
-            textAlign = TextAlign.Center
-        )
-        Text(
-            text = song.artist, 
-            style = MaterialTheme.typography.bodySmall.copy(
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-            ), 
-            maxLines = 1, 
-            overflow = TextOverflow.Ellipsis, 
-            modifier = Modifier.fillMaxWidth(),
-            textAlign = TextAlign.Center
-        )
     }
 }
 

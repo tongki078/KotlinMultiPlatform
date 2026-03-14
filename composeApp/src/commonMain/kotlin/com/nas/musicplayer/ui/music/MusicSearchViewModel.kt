@@ -45,8 +45,8 @@ data class IntegratedSearchResponse(
 
 data class MusicSearchUiState(
     val searchResults: List<Song> = emptyList(),
-    val searchArtists: List<NetworkArtist> = emptyList(), // 추가
-    val searchAlbums: List<Album> = emptyList(),     // 추가
+    val searchArtists: List<NetworkArtist> = emptyList(),
+    val searchAlbums: List<Album> = emptyList(),
     val top100Songs: List<Song> = emptyList(),
     val themes: List<Theme> = emptyList(),
     val collectionThemes: List<Theme> = emptyList(),
@@ -89,8 +89,8 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
     }
 
     companion object {
-        fun Factory(musicRepository: MusicRepository): ViewModelProvider.Factory = viewModelFactory {
-            initializer { MusicSearchViewModel(musicRepository) }
+        fun Factory(repository: MusicRepository): ViewModelProvider.Factory = viewModelFactory {
+            initializer { MusicSearchViewModel(repository) }
         }
     }
 
@@ -141,6 +141,16 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         }
     }
 
+    fun loadTop100() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, top100Songs = emptyList()) }
+            try {
+                val response = httpClient.get("$pythonBaseUrl/api/top100").body<List<Song>>()
+                _uiState.update { it.copy(top100Songs = response.map { cleanSongInfo(it) }, isLoading = false) }
+            } catch (e: Exception) { _uiState.update { it.copy(isLoading = false) } }
+        }
+    }
+
     fun performSearch(query: String = _uiState.value.searchQuery) {
         val trimmedQuery = query.trim()
         if (trimmedQuery.isBlank()) return
@@ -148,19 +158,20 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         viewModelScope.launch {
             repository.addRecentSearch(trimmedQuery, Clock.System.now().toEpochMilliseconds())
             try {
-                // 통합 검색 API 호출
                 val response = httpClient.get("$pythonBaseUrl/api/library/search_integrated") { 
                     parameter("q", trimmedQuery) 
                 }.body<IntegratedSearchResponse>()
                 
+                // [중요] 중복 제거 기준을 id로 변경하여 다른 노래가 같은 제목으로 인해 사라지는 것 방지
+                val finalResult = response.songs.map { cleanSongInfo(it) }.distinctBy { it.id }
+                
                 _uiState.update { it.copy(
-                    searchResults = response.songs.map { s -> cleanSongInfo(s) },
+                    searchResults = finalResult,
                     searchArtists = response.artists,
                     searchAlbums = response.albums,
                     isLoading = false
                 ) }
             } catch (e: Exception) { 
-                println("Integrated Search Error: ${e.message}")
                 _uiState.update { it.copy(isLoading = false) } 
             }
         }
@@ -173,24 +184,25 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         }
     }
 
-    fun loadTop100() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, top100Songs = emptyList()) }
-            try {
-                val response = httpClient.get("$pythonBaseUrl/api/top100").body<List<Song>>()
-                _uiState.update { it.copy(top100Songs = response.map { cleanSongInfo(it) }, isLoading = false) }
-            } catch (e: Exception) { _uiState.update { it.copy(isLoading = false) } }
-        }
-    }
-
     private fun cleanSongInfo(song: Song): Song {
         val fileName = song.name ?: ""
         var cleanName = fileName.replace(Regex("""\.(mp3|flac|m4a|wav|dsf)$""", RegexOption.IGNORE_CASE), "").trim()
         cleanName = cleanName.replace(Regex("""^\d+[\s\.\-_]+"""), "").trim()
-        return if (cleanName.contains(" - ")) {
+        
+        val cleaned = if (cleanName.contains(" - ")) {
             val parts = cleanName.split(" - ", limit = 2)
             song.copy(name = parts[1].trim(), artist = parts[0].trim(), isDir = false)
-        } else song.copy(name = cleanName, isDir = false)
+        } else {
+            song.copy(name = cleanName, isDir = false)
+        }
+
+        // [Fix] ID가 0인 경우에만 생성하고, 서버에서 준 ID가 있다면 보존합니다.
+        return if (cleaned.id == 0L) {
+            val uniqueKey = "${cleaned.artist}-${cleaned.name}-${cleaned.streamUrl}"
+            cleaned.copy(id = uniqueKey.hashCode().toLong())
+        } else {
+            cleaned
+        }
     }
 
     fun setLocalSongs(songs: List<Song>) { allLocalSongs = songs; updateDownloadedKeys() }
