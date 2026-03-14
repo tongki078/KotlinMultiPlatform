@@ -1275,30 +1275,54 @@ def get_library_artists_paged(folder_type):
     except: return jsonify([])
 
 # 2. 가수별 음악 리스트 API (새로 생성)
-@app.route('/api/library/songs_by_artist/<artist_name>')
-def get_songs_by_artist(artist_name):
+# [수정] 특정 앨범의 곡 목록을 가져오는 API (컴필레이션 앨범 전곡 지원)
+@app.route('/api/library/songs_by_album/<artist_name>/<album_name>')
+def get_songs_by_album(artist_name, album_name):
     try:
+        art = urllib.parse.unquote(artist_name)
+        alb = urllib.parse.unquote(album_name)
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
+            # 1. 먼저 해당 가수의 해당 앨범명이 있는 대표 폴더 경로를 찾습니다.
+            path_row = conn.execute(
+                """SELECT parent_path FROM global_songs
+                   WHERE UPPER(TRIM(artist)) = UPPER(TRIM(?))
+                   AND UPPER(TRIM(albumName)) = UPPER(TRIM(?)) LIMIT 1""",
+                (art, alb)
+            ).fetchone()
+
+            if path_row:
+                # 2. [핵심] 찾은 폴더(parent_path) 내의 모든 곡을 가져옵니다.
+                # 이렇게 하면 다양한 가수가 섞인 컴필레이션 앨범도 전곡이 나옵니다.
+                rows = conn.execute(
+                    "SELECT * FROM global_songs WHERE parent_path = ? ORDER BY name",
+                    (path_row['parent_path'],)
+                ).fetchall()
+                return jsonify([dict(r) for r in rows])
+
+            # 경로를 못 찾은 경우에만 기존의 가수+앨범명 방식으로 시도
             rows = conn.execute(
-                "SELECT * FROM global_songs WHERE artist = ? ORDER BY albumName, name",
-                (artist_name,)
+                """SELECT * FROM global_songs
+                   WHERE UPPER(TRIM(artist)) = UPPER(TRIM(?))
+                   AND UPPER(TRIM(albumName)) = UPPER(TRIM(?))
+                   ORDER BY name""",
+                (art, alb)
             ).fetchall()
             return jsonify([dict(r) for r in rows])
-    except: return jsonify([])
+    except Exception as e:
+        print(f"[!] 곡 목록 조회 에러: {e}")
+        return jsonify([])
 
-# [수정/추가] 특정 가수의 앨범 목록을 가져오는 API
-# [수정] 특정 가수의 앨범 목록을 가져오는 API (앱 모델과 필드명 동기화)
+# NasMusicPlayer.py 내 해당 함수 교체
 @app.route('/api/library/albums_by_artist/<artist_name>')
 def get_albums_by_artist(artist_name):
     try:
         name = urllib.parse.unquote(artist_name)
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
-            # 앨범명(name), 이미지(imageUrl), 연도(year) 필드명을 앱 모델과 일치시킴
-            # UPPER(TRIM())을 사용하여 공백이나 대소문자 차이로 인한 검색 실패 방지
             rows = conn.execute(
-                """SELECT albumName as name, artist, MAX(meta_poster) as imageUrl, MAX(release_date) as year
+                """SELECT albumName as name, artist, MAX(meta_poster) as imageUrl,
+                          CAST(MAX(SUBSTR(release_date, 1, 4)) AS INTEGER) as year
                    FROM global_songs
                    WHERE UPPER(TRIM(artist)) = UPPER(TRIM(?))
                    GROUP BY albumName
@@ -1312,24 +1336,6 @@ def get_albums_by_artist(artist_name):
     except Exception as e:
         print(f"[!] 앨범 조회 에러: {e}")
     return jsonify([])
-
-
-# [수정] 특정 앨범의 곡 목록을 가져오는 API
-@app.route('/api/library/songs_by_album/<artist_name>/<album_name>')
-def get_songs_by_album(artist_name, album_name):
-    try:
-        art = urllib.parse.unquote(artist_name)
-        alb = urllib.parse.unquote(album_name)
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "SELECT * FROM global_songs WHERE UPPER(TRIM(artist)) = UPPER(TRIM(?)) AND UPPER(TRIM(albumName)) = UPPER(TRIM(?)) ORDER BY name",
-                (art, alb)
-            ).fetchall()
-            return jsonify([dict(r) for r in rows])
-    except Exception as e:
-        print(f"[!] 곡 목록 조회 에러: {e}")
-        return jsonify([])
 
 @app.route('/stream/<path:fp>')
 def stream(fp): return send_from_directory(MUSIC_BASE, urllib.parse.unquote(fp))
