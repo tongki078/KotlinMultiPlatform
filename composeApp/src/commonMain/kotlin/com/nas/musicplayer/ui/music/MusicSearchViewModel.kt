@@ -15,6 +15,7 @@ import io.ktor.client.request.*
 import io.ktor.http.takeFrom
 import io.ktor.http.appendPathSegments
 import io.ktor.http.encodeURLPath
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
@@ -149,15 +150,28 @@ class MusicSearchViewModel(val repository: MusicRepository) : ViewModel() {
 
     fun loadTop100() {
         if (_uiState.value.isTop100Loading) return
-        
+
         viewModelScope.launch {
             _uiState.update { it.copy(isTop100Loading = true) }
             try {
-                val response = httpClient.get("$pythonBaseUrl/api/top100").body<List<Song>>()
-                val songs = response.map { cleanSongInfo(it) }
-                _uiState.update { it.copy(top100Songs = songs, isTop100Loading = false) }
-            } catch (e: Exception) { 
+                // 직접 httpClient 대신 정의된 musicApiService를 사용하도록 변경
+                val response = musicApiService.getTop100()
+                if (response.isNotEmpty()) {
+                    val songs = response.map { cleanSongInfo(it) }
+                    _uiState.update { it.copy(top100Songs = songs, isTop100Loading = false) }
+                    println("Top100 loaded successfully: ${songs.size} songs")
+                } else {
+                    // 데이터가 비어있을 경우 재시도 로직을 넣거나 상태 유지
+                    _uiState.update { it.copy(isTop100Loading = false) }
+                    println("Top100 returned empty list from server")
+                }
+            } catch (e: Exception) {
+                println("Top100 loading failed: ${e.message}")
                 _uiState.update { it.copy(isTop100Loading = false) }
+
+                // 3초 뒤에 한 번 더 자동으로 재시도 (선택 사항)
+                delay(3000)
+                loadTop100()
             }
         }
     }
