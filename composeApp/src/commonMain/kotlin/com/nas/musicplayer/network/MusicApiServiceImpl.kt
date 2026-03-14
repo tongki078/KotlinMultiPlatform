@@ -1,5 +1,6 @@
 package com.nas.musicplayer.network
 
+import com.nas.musicplayer.Song
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
@@ -15,13 +16,11 @@ class MusicApiServiceImpl(private val client: io.ktor.client.HttpClient) : Music
         return client.get("${BASE_URL}api/library/artists/$folderType").body()
     }
 
-    override suspend fun getTop100(): SearchResponse {
-        // 경로 수정: top100 -> api/top100
+    override suspend fun getTop100(): List<Song> {
         return client.get("${BASE_URL}api/top100?apikey=$API_KEY").body()
     }
 
-    override suspend fun search(searchQuery: String): SearchResponse {
-        // 경로 수정: search -> api/search
+    override suspend fun search(searchQuery: String): List<Song> {
         return client.get("${BASE_URL}api/search?q=$searchQuery&apikey=$API_KEY").body()
     }
 

@@ -102,7 +102,7 @@ fun App(
                     composable("search") {
                         MusicSearchScreen(
                             viewModel = searchViewModel,
-                            onSongClick = { song -> musicPlayerViewModel.playSong(song, uiState.searchResults.ifEmpty { uiState.top100Songs }) },
+                            onSongClick = { song -> musicPlayerViewModel.playSong(song, uiState.searchResults) },
                             onNavigateToPlaylists = { navController.navigate("playlists") },
                             onNavigateToArtist = { artist -> navController.navigate("artist_detail/${artist.name}") },
                             onNavigateToAlbum = { album -> navController.navigate("album_detail/${album.name}/${album.artist}") },
@@ -218,7 +218,7 @@ fun App(
                     }
                     composable("add_to_playlist/{songId}", arguments = listOf(navArgument("songId") { type = NavType.LongType })) { backStackEntry ->
                         val songId = backStackEntry.arguments?.getLong("songId") ?: -1L
-                        val song = (uiState.searchResults + uiState.top100Songs + localSongs).find { it.id == songId }
+                        val song = (uiState.searchResults + localSongs).find { it.id == songId }
                         song?.let { AddToPlaylistScreen(it, musicRepository, { navController.popBackStack() }, { navController.popBackStack() }) }
                     }
                 }

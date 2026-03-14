@@ -64,7 +64,6 @@ fun MusicSearchScreen(
     val uiState by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()
     val focusManager = LocalFocusManager.current
-    val keyboardController = LocalSoftwareKeyboardController.current
     
     var isSearchFocused by remember { mutableStateOf(false) }
 
@@ -73,6 +72,11 @@ fun MusicSearchScreen(
     var selectedSongForSheet by remember { mutableStateOf<Song?>(null) }
 
     val primaryColor = MaterialTheme.colorScheme.primary
+
+    // [Fix] 앱 시작 시 자동 포커스 방지
+    LaunchedEffect(Unit) {
+        focusManager.clearFocus()
+    }
 
     val infiniteTransition = rememberInfiniteTransition()
     val micAlpha by infiniteTransition.animateFloat(
@@ -126,11 +130,11 @@ fun MusicSearchScreen(
         }
 
         Box(modifier = Modifier.weight(1f)) {
-            // [수정] 검색 모드일 때 (포커스됨 혹은 검색어 있음)
+            // [개선] 실제로 검색 중이거나 검색어가 입력되었을 때만 검색 모드 UI 표시
             if (isSearchFocused || uiState.searchQuery.isNotEmpty()) {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    // [핵심] 검색어가 있고, 로딩 중이 아닐 때만 결과 리스트를 보여줌
-                    if (uiState.searchQuery.isNotEmpty() && !uiState.isLoading && uiState.searchResults.isNotEmpty()) {
+                    // 검색 결과가 있을 때만 노래 리스트 표시
+                    if (uiState.searchResults.isNotEmpty()) {
                         items(uiState.searchResults, key = { it.id.toString() + it.name + it.artist }) { song ->
                             SongListItem(
                                 song = song,
@@ -141,21 +145,13 @@ fun MusicSearchScreen(
                             )
                         }
                     } else if (!uiState.isLoading) {
-                        // 검색창 포커스만 한 상태거나 결과가 없을 때 보여줄 화면
+                        // 결과가 없거나 입력 대기 중일 때
                         item {
                             Box(modifier = Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(
-                                        imageVector = Icons.Default.Search, 
-                                        contentDescription = null, 
-                                        modifier = Modifier.size(64.dp), 
-                                        tint = Color.Gray.copy(alpha = 0.3f)
-                                    )
+                                    Icon(Icons.Default.Search, null, modifier = Modifier.size(64.dp), tint = Color.Gray.copy(alpha = 0.3f))
                                     Spacer(modifier = Modifier.height(16.dp))
-                                    Text(
-                                        text = if(uiState.searchQuery.isEmpty()) "검색어를 입력해 주세요." else "검색 결과가 없습니다.", 
-                                        color = Color.Gray
-                                    )
+                                    Text(if(uiState.searchQuery.isEmpty()) "검색어를 입력해 주세요." else "검색 결과가 없습니다.", color = Color.Gray)
                                 }
                             }
                         }
