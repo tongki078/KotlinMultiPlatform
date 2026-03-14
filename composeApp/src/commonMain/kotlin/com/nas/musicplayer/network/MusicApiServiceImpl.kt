@@ -6,7 +6,7 @@ import io.ktor.client.request.parameter
 import io.ktor.http.HttpStatusCode
 
 class MusicApiServiceImpl(private val client: io.ktor.client.HttpClient) : MusicApiService {
-    private val BASE_URL = "http://192.168.0.2:4444/" // 서버 로컬 IP로 수정
+    private val BASE_URL = "http://192.168.0.2:4444/" 
     private val API_KEY = "gommikey"
     private val LYRICS_GET_URL = "https://lrclib.net/api/get"
     private val LYRICS_SEARCH_URL = "https://lrclib.net/api/search"
@@ -16,11 +16,13 @@ class MusicApiServiceImpl(private val client: io.ktor.client.HttpClient) : Music
     }
 
     override suspend fun getTop100(): SearchResponse {
-        return client.get("${BASE_URL}top100?apikey=$API_KEY").body()
+        // 경로 수정: top100 -> api/top100
+        return client.get("${BASE_URL}api/top100?apikey=$API_KEY").body()
     }
 
     override suspend fun search(searchQuery: String): SearchResponse {
-        return client.get("${BASE_URL}search?query=$searchQuery&apikey=$API_KEY").body()
+        // 경로 수정: search -> api/search
+        return client.get("${BASE_URL}api/search?q=$searchQuery&apikey=$API_KEY").body()
     }
 
     override suspend fun getLyrics(artist: String, title: String): LrcResponse? {

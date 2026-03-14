@@ -37,7 +37,8 @@ data class ThemeResponse(
 )
 
 data class MusicSearchUiState(
-    val songs: List<Song> = emptyList(),
+    val searchResults: List<Song> = emptyList(), // 검색 결과 전용
+    val top100Songs: List<Song> = emptyList(),   // 멜론 차트 전용
     val themes: List<Theme> = emptyList(),
     val collectionThemes: List<Theme> = emptyList(),
     val artistThemes: List<Theme> = emptyList(),
@@ -88,7 +89,6 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
         if (isPagingLoading) return
         if (isRefresh) { artistPage = 1; artistGrid.clear(); isLastPage = false }
         if (isLastPage) return
-
         isPagingLoading = true
         viewModelScope.launch {
             try {
@@ -102,24 +102,17 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
 
     fun loadArtistDetails(artistName: String) {
         viewModelScope.launch {
-            // 로딩 상태를 확실히 업데이트하고 기존 데이터를 비움
             _uiState.update { it.copy(isArtistLoading = true, selectedArtist = null) }
             try {
                 val albums = httpClient.get("$pythonBaseUrl/api/library/albums_by_artist/${artistName.encodeURLPath()}").body<List<Album>>()
-                
-                // Artist 객체 생성 시 albums 리스트를 명시적으로 전달
                 val artistInfo = com.nas.musicplayer.Artist(
                     name = artistName,
                     imageUrl = albums.firstOrNull { !it.imageUrl.isNullOrBlank() }?.imageUrl,
                     albums = albums,
-                    popularSongs = emptyList() 
+                    popularSongs = emptyList()
                 )
-                
                 _uiState.update { it.copy(selectedArtist = artistInfo, isArtistLoading = false) }
-            } catch (e: Exception) { 
-                println("[!] Artist Details Error: ${e.message}")
-                _uiState.update { it.copy(isArtistLoading = false) } 
-            }
+            } catch (e: Exception) { _uiState.update { it.copy(isArtistLoading = false) } }
         }
     }
 
@@ -128,144 +121,78 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
             _uiState.update { it.copy(isAlbumLoading = true, selectedAlbum = null) }
             try {
                 val songs = httpClient.get("$pythonBaseUrl/api/library/songs_by_album/${artistName.encodeURLPath()}/${albumName.encodeURLPath()}").body<List<Song>>()
-                val cleanedSongs = songs.map { cleanSongInfo(it) }
                 val albumInfo = Album(
                     name = albumName,
                     artist = artistName,
-                    songs = cleanedSongs,
-                    imageUrl = cleanedSongs.firstOrNull { !it.metaPoster.isNullOrBlank() && it.metaPoster != "FAIL" }?.metaPoster
+                    songs = songs.map { cleanSongInfo(it) },
+                    imageUrl = songs.firstOrNull { !it.metaPoster.isNullOrBlank() && it.metaPoster != "FAIL" }?.metaPoster
                 )
                 _uiState.update { it.copy(selectedAlbum = albumInfo, isAlbumLoading = false) }
-            } catch (e: Exception) { 
-                _uiState.update { it.copy(isAlbumLoading = false) } 
-            }
-        }
-    }
-
-    fun setLocalSongs(songs: List<Song>) {
-        allLocalSongs = songs
-        updateDownloadedKeys()
-    }
-
-    private fun updateDownloadedKeys() {
-        val keys = allLocalSongs.map { generateMatchKey(it.artist, it.name ?: "") }.toSet()
-        _uiState.update { it.copy(downloadedSongKeys = keys) }
-    }
-
-    fun isSongDownloaded(song: Song): Boolean {
-        val key = generateMatchKey(song.artist, song.name ?: "")
-        return _uiState.value.downloadedSongKeys.contains(key)
-    }
-
-    private fun generateMatchKey(artist: String, title: String): String {
-        val cleanArtist = artist.replace(Regex("""[^a-zA-Z0-9가-힣ㄱ-ㅎㅏ-ㅣ]"""), "").lowercase()
-        val cleanTitle = title.replace(Regex("""[^a-zA-Z0-9가-힣ㄱ-ㅎㅏ-ㅣ]"""), "").lowercase()
-        return "$cleanArtist-$cleanTitle"
-    }
-
-    fun onSearchQueryChanged(query: String) {
-        _uiState.update { it.copy(searchQuery = query) }
-        if (query.isBlank()) {
-            loadTop100()
-        }
-    }
-
-    fun loadThemes() {
-        viewModelScope.launch {
-            try {
-                val response = httpClient.get("$pythonBaseUrl/api/themes").body<ThemeResponse>()
-                _uiState.update { it.copy(
-                    themes = response.charts,
-                    collectionThemes = response.collections,
-                    artistThemes = response.artists,
-                    genreThemes = response.genres
-                ) }
-            } catch (e: Exception) {
-                println("Failed to load themes: ${e.message}")
-            }
-        }
-    }
-
-    fun loadThemeDetails(theme: Theme) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, songs = emptyList()) }
-            try {
-                val songs = httpClient.get {
-                    url {
-                        takeFrom(pythonBaseUrl)
-                        appendPathSegments("api", "theme-details")
-                        appendPathSegments(theme.path.split("/"))
-                    }
-                }.body<List<Song>>()
-                val finalSongs = songs.map { cleanSongInfo(it) }
-                _uiState.update { it.copy(songs = finalSongs, isLoading = false) }
-            } catch (e: Exception) {
-                _uiState.update { it.copy(isLoading = false) }
-            }
+            } catch (e: Exception) { _uiState.update { it.copy(isAlbumLoading = false) } }
         }
     }
 
     fun loadTop100() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, searchQuery = "", songs = emptyList()) }
             try {
                 val response = httpClient.get("$pythonBaseUrl/api/top100").body<List<Song>>()
-                val pythonWeeklySongs = response.map { cleanSongInfo(it) }
-                _uiState.update { it.copy(songs = pythonWeeklySongs, isLoading = false) }
-            } catch (e: Exception) {
-                _uiState.update { it.copy(isLoading = false) }
-            }
+                _uiState.update { it.copy(top100Songs = response.map { s -> cleanSongInfo(s) }) }
+            } catch (e: Exception) { println("Top100 error") }
         }
     }
 
     fun performSearch(query: String = _uiState.value.searchQuery) {
         val trimmedQuery = query.trim()
-        if (trimmedQuery.isBlank()) {
-            loadTop100()
-            return
-        }
-        _uiState.update { it.copy(searchQuery = trimmedQuery, isLoading = true, songs = emptyList()) }
+        if (trimmedQuery.isBlank()) return
+        _uiState.update { it.copy(searchQuery = trimmedQuery, isLoading = true, searchResults = emptyList()) }
         viewModelScope.launch {
-            val timestamp = Clock.System.now().toEpochMilliseconds()
-            repository.addRecentSearch(trimmedQuery, timestamp)
+            repository.addRecentSearch(trimmedQuery, Clock.System.now().toEpochMilliseconds())
             try {
-                val pythonResults = httpClient.get("$pythonBaseUrl/api/search") {
-                    parameter("q", trimmedQuery)
-                }.body<List<Song>>().map { cleanSongInfo(it) }
-                val networkResult = musicApiService.search(trimmedQuery).toSongList()
-                    .filter { !it.isDir }
-                    .map { cleanSongInfo(it) }
+                val pythonResults = httpClient.get("$pythonBaseUrl/api/search") { parameter("q", trimmedQuery) }.body<List<Song>>().map { cleanSongInfo(it) }
+                val networkResult = musicApiService.search(trimmedQuery).toSongList().filter { !it.isDir }.map { cleanSongInfo(it) }
                 val finalResult = (pythonResults + networkResult).distinctBy { "${it.name}-${it.artist}" }
-                _uiState.update { it.copy(songs = finalResult, isLoading = false) }
-            } catch (e: Exception) {
-                _uiState.update { it.copy(isLoading = false) }
-            }
+                _uiState.update { it.copy(searchResults = finalResult, isLoading = false) }
+            } catch (e: Exception) { _uiState.update { it.copy(isLoading = false) } }
         }
     }
 
-    fun startDownloading(songId: Long) {
-        _uiState.update { it.copy(downloadingSongIds = it.downloadingSongIds + songId) }
+    fun onSearchQueryChanged(query: String) {
+        _uiState.update { it.copy(searchQuery = query) }
+        // 타이핑 시에는 기존 검색 결과만 비움 (멜론 차트는 건드리지 않음)
+        if (query.isEmpty()) {
+            _uiState.update { it.copy(searchResults = emptyList()) }
+        }
     }
 
-    fun stopDownloading(songId: Long) {
-        _uiState.update { it.copy(downloadingSongIds = it.downloadingSongIds - songId) }
-    }
-
-    private fun cleanSongInfo(s: Song): Song {
-        val fileName = s.name ?: ""
+    private fun cleanSongInfo(song: Song): Song {
+        val fileName = song.name ?: ""
         var cleanName = fileName.replace(Regex("""\.(mp3|flac|m4a|wav|dsf)$""", RegexOption.IGNORE_CASE), "").trim()
         cleanName = cleanName.replace(Regex("""^\d+[\s\.\-_]+"""), "").trim()
         return if (cleanName.contains(" - ")) {
             val parts = cleanName.split(" - ", limit = 2)
-            s.copy(name = parts[1].trim(), artist = parts[0].trim(), isDir = false)
-        } else s.copy(name = cleanName, isDir = false)
+            song.copy(name = parts[1].trim(), artist = parts[0].trim(), isDir = false)
+        } else song.copy(name = cleanName, isDir = false)
     }
 
-    fun deleteRecentSearch(query: String) {
-        viewModelScope.launch { repository.deleteRecentSearch(query) }
+    fun setLocalSongs(songs: List<Song>) { allLocalSongs = songs; updateDownloadedKeys() }
+    private fun updateDownloadedKeys() {
+        val keys = allLocalSongs.map { generateMatchKey(it.artist, it.name ?: "") }.toSet()
+        _uiState.update { it.copy(downloadedSongKeys = keys) }
     }
-
-    fun clearAllRecentSearches() {
-        viewModelScope.launch { repository.clearAllRecentSearches() }
+    fun isSongDownloaded(song: Song): Boolean = _uiState.value.downloadedSongKeys.contains(generateMatchKey(song.artist, song.name ?: ""))
+    private fun generateMatchKey(artist: String, title: String): String = "${artist.replace(Regex("[^a-zA-Z0-9가-힣]"), "").lowercase()}-${title.replace(Regex("[^a-zA-Z0-9가-힣]"), "").lowercase()}"
+    fun startDownloading(id: Long) { _uiState.update { it.copy(downloadingSongIds = it.downloadingSongIds + id) } }
+    fun stopDownloading(id: Long) { _uiState.update { it.copy(downloadingSongIds = it.downloadingSongIds - id) } }
+    fun loadThemes() { viewModelScope.launch { try { val res = httpClient.get("$pythonBaseUrl/api/themes").body<ThemeResponse>(); _uiState.update { it.copy(themes = res.charts, collectionThemes = res.collections, artistThemes = res.artists, genreThemes = res.genres) } } catch(e: Exception){} } }
+    fun deleteRecentSearch(q: String) { viewModelScope.launch { repository.deleteRecentSearch(q) } }
+    fun clearAllRecentSearches() { viewModelScope.launch { repository.clearAllRecentSearches() } }
+    fun loadThemeDetails(t: Theme) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, searchResults = emptyList()) }
+            try {
+                val songs = httpClient.get { url { takeFrom(pythonBaseUrl); appendPathSegments("api", "theme-details"); appendPathSegments(t.path.split("/")) } }.body<List<Song>>()
+                _uiState.update { it.copy(searchResults = songs.map { cleanSongInfo(it) }, isLoading = false) }
+            } catch (e: Exception) { _uiState.update { it.copy(isLoading = false) } }
+        }
     }
 }

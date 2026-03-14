@@ -126,8 +126,44 @@ fun MusicSearchScreen(
         }
 
         Box(modifier = Modifier.weight(1f)) {
-            LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
-                if (!isSearchFocused && uiState.searchQuery.isEmpty()) {
+            // [수정] 검색 모드일 때 (포커스됨 혹은 검색어 있음)
+            if (isSearchFocused || uiState.searchQuery.isNotEmpty()) {
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    // [핵심] 검색어가 있고, 로딩 중이 아닐 때만 결과 리스트를 보여줌
+                    if (uiState.searchQuery.isNotEmpty() && !uiState.isLoading && uiState.searchResults.isNotEmpty()) {
+                        items(uiState.searchResults, key = { it.id.toString() + it.name + it.artist }) { song ->
+                            SongListItem(
+                                song = song,
+                                onItemClick = { onSongClick(song) },
+                                onMoreClick = { selectedSongForSheet = song; scope.launch { sheetState.show() } },
+                                isDownloading = downloadingSongIds.contains(song.id),
+                                isDownloaded = viewModel.isSongDownloaded(song)
+                            )
+                        }
+                    } else if (!uiState.isLoading) {
+                        // 검색창 포커스만 한 상태거나 결과가 없을 때 보여줄 화면
+                        item {
+                            Box(modifier = Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        imageVector = Icons.Default.Search, 
+                                        contentDescription = null, 
+                                        modifier = Modifier.size(64.dp), 
+                                        tint = Color.Gray.copy(alpha = 0.3f)
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text(
+                                        text = if(uiState.searchQuery.isEmpty()) "검색어를 입력해 주세요." else "검색 결과가 없습니다.", 
+                                        color = Color.Gray
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // 평상시 메인 화면 (추천 테마들 + 멜론 차트)
+                LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
                     if (uiState.themes.isNotEmpty()) {
                         item { ThemeSection(title = "추천 차트", themes = uiState.themes, onNavigateToTheme = onNavigateToTheme) }
                     }
@@ -146,8 +182,7 @@ fun MusicSearchScreen(
                         }
                     }
                     
-                    // 멜론 주간 TOP 100 헤더
-                    if (uiState.songs.isNotEmpty()) {
+                    if (uiState.top100Songs.isNotEmpty()) {
                         item {
                             Text(
                                 text = "멜론 주간 TOP 100",
@@ -156,23 +191,23 @@ fun MusicSearchScreen(
                                 modifier = Modifier.padding(start = 16.dp, top = 24.dp, bottom = 12.dp)
                             )
                         }
+                        items(uiState.top100Songs, key = { it.id.toString() + it.name + it.artist }) { song ->
+                            SongListItem(
+                                song = song,
+                                onItemClick = { onSongClick(song) },
+                                onMoreClick = { selectedSongForSheet = song; scope.launch { sheetState.show() } },
+                                isDownloading = downloadingSongIds.contains(song.id),
+                                isDownloaded = viewModel.isSongDownloaded(song)
+                            )
+                        }
                     }
-                }
-
-                // 리스트 출력
-                items(uiState.songs, key = { it.id.toString() + it.name + it.artist }) { song ->
-                    SongListItem(
-                        song = song,
-                        onItemClick = { onSongClick(song) },
-                        onMoreClick = { selectedSongForSheet = song; scope.launch { sheetState.show() } },
-                        isDownloading = downloadingSongIds.contains(song.id),
-                        isDownloaded = viewModel.isSongDownloaded(song)
-                    )
                 }
             }
             
-            if (uiState.isLoading && uiState.songs.isEmpty()) {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { MusicLoadingScreen() }
+            if (uiState.isLoading) {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background.copy(alpha = 0.9f)) {
+                    MusicLoadingScreen() 
+                }
             }
         }
     }

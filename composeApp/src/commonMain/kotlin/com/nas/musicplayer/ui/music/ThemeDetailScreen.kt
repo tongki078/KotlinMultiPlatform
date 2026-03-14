@@ -41,7 +41,8 @@ fun ThemeDetailScreen(
         }
     ) { innerPadding ->
         Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-            if (uiState.isLoading && uiState.songs.isEmpty()) {
+            // uiState.songs가 searchResults로 변경됨에 따라 참조 수정
+            if (uiState.isLoading && uiState.searchResults.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
@@ -53,10 +54,10 @@ fun ThemeDetailScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    items(uiState.songs) { song ->
+                    items(uiState.searchResults) { song ->
                         SongCardItem(
                             song = song,
-                            onClick = { onSongClick(song, uiState.songs) },
+                            onClick = { onSongClick(song, uiState.searchResults) },
                             onLongClick = { onShowSongOptions(song) }
                         )
                     }
