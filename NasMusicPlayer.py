@@ -30,7 +30,7 @@ GENRE_ROOTS = {
 # 폴더별 정제 방식(clean)과 검색 엔진 우선순위(priority) 사전 정의
 META_STRATEGIES = {
     "국내":   {"priority": ["maniadb", "deezer"], "clean": "korean"},
-    "외국":   {"priority": ["deezer", "maniadb"], "clean": "western"},
+    "외국":   {"priority": ["deezer"], "clean": "western"},
     "일본":   {"priority": ["deezer"], "clean": "western"},
     "클래식": {"priority": ["deezer"], "clean": "western"},
     "DSD":    {"priority": ["deezer"], "clean": "western"},
@@ -425,11 +425,12 @@ MONITOR_HTML = '''
 # 3. 핵심 로직: DB, 스캔, 인덱싱 (중간 저장 및 이어하기)
 # ==========================================
 def init_db():
-    print("[*] 🛠️ DB 엔진 최적화 및 테이블 점검 중...")
+    print("[*] 🛠️ DB 엔진 최적화 및 인덱스 점검 중...")
     with sqlite3.connect(DB_PATH, timeout=600) as conn:
         conn.execute('PRAGMA journal_mode=WAL')
+        conn.execute('PRAGMA cache_size = -2000000')  # 2GB 메모리 캐시 설정
 
-        # 1. global_songs 테이블
+        # 1. 기본 테이블 생성
         conn.execute('''
             CREATE TABLE IF NOT EXISTS global_songs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -439,27 +440,54 @@ def init_db():
             )
         ''')
 
-        # 2. themes 테이블 생성
+        # 2. 아티스트 캐시 테이블 (애플뮤직 스타일 탐색용)
         conn.execute('''
-            CREATE TABLE IF NOT EXISTS themes (
-                type TEXT, name TEXT, path TEXT, image_url TEXT,
-                PRIMARY KEY (type, path)
+            CREATE TABLE IF NOT EXISTS artists_cache (
+                artist_name TEXT,
+                cover TEXT,
+                folder_type TEXT,
+                PRIMARY KEY (artist_name, folder_type)
             )
         ''')
 
-        # [중요] 기존 테이블에 image_url 컬럼이 없는 경우를 위한 강제 추가 로직
-        try:
-            conn.execute("ALTER TABLE themes ADD COLUMN image_url TEXT")
-            print("[*] themes 테이블에 image_url 컬럼을 추가했습니다.")
-        except sqlite3.OperationalError:
-            # 이미 컬럼이 있는 경우 에러가 나므로 무시함
-            pass
-
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_grouping ON global_songs(artist, albumName)')
+        # 3. 검색 최적화를 위한 인덱스 생성
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_search_name ON global_songs(name)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_search_artist ON global_songs(artist)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_search_album ON global_songs(albumName)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_path ON global_songs(parent_path)')
-        conn.commit()
-    print("[*] ✅ DB 구조 점검 완료.")
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_artist_cache_folder ON artists_cache(folder_type)')
 
+        conn.commit()
+    print("[*] ✅ DB 인덱싱 및 캐시 구조 점검 완료.")
+
+def refresh_artist_cache():
+    print("[*] 🔄 아티스트 목록 캐시 갱신 중... (대용량 데이터 최적화)")
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("DELETE FROM artists_cache")
+            # 폴더별(국내, 외국 등) 유니크한 가수와 대표 이미지 추출
+            conn.execute("""
+                INSERT INTO artists_cache (artist_name, cover, folder_type)
+                SELECT
+                    TRIM(artist) as name,
+                    MAX(meta_poster) as cover,
+                    CASE
+                        WHEN parent_path LIKE '국내%' THEN '국내'
+                        WHEN parent_path LIKE '외국%' THEN '외국'
+                        WHEN parent_path LIKE '일본%' THEN '일본'
+                        WHEN parent_path LIKE 'DSD%' THEN 'DSD'
+                        WHEN parent_path LIKE 'OST%' THEN 'OST'
+                        WHEN parent_path LIKE '클래식%' THEN '클래식'
+                        ELSE '기타'
+                    END as folder
+                FROM global_songs
+                WHERE artist != '' AND artist != 'Unknown Artist'
+                GROUP BY UPPER(TRIM(artist)), folder
+            """)
+            conn.commit()
+        print("[*] ✅ 아티스트 캐시 갱신 완료!")
+    except Exception as e:
+        print(f"[!] 캐시 생성 에러: {e}")
 
 def load_cache():
     global cache
@@ -746,86 +774,88 @@ def clean_query_text(text, is_artist=False, folder_mode="western"):
     if not text or text == 'Unknown Artist': return ""
     s = str(text)
 
-    if is_artist:
-        # [모드별 정제]
-        if folder_mode == "western":
-            # 외국/일본/DSD 등에서 발생하는 아티스트명 뒤의 부가정보 제거
-            s = re.sub(r'(?i)\s+[vwo]\s+[a-z\s]+', ' ', s)
-            s = re.sub(r'(?i)\s+[vwo][A-Z][a-z]+', ' ', s)
-        elif folder_mode == "korean":
-            # 국내 폴더 특수 패턴 제거
-            s = re.sub(r'(?i)\b(AMAZING MUSIC|Moved da Christ|YRG\d+|음자리표)\b', '', s)
+    # [1] 외국 모드 전용: TOTP 19XX XX 같은 패턴 선제적 제거
+    if folder_mode == "western":
+        # "TOTP 1964 05 Roy Orbison" -> "Roy Orbison"
+        s = re.sub(r'(?i)TOTP\s+\d{4}\s+\d{2}', '', s)
 
+        if is_artist:
+            # 아티스트명 뒤의 부가정보 (feat, with 등) 제거
+            s = re.split(r'(?i)\s+(feat|ft|with|vwo|v\.w\.o)\b', s)[0]
+
+    # [2] 공통 정제: 괄호 내용 제거 및 날짜 형식 제거
+    s = re.sub(r'\(.*?\)|\[.*?\]|\{.*?\}', ' ', s)
+    s = re.sub(r'\d{2,4}\.\d{2}\.\d{2}', ' ', s) # \d.2} 오타 수정
+    s = re.sub(r'^\d{1,3}[\s\.\-_/]+', '', s.strip())
+
+    # 아티스트인 경우 구분자 기준 첫 번째 요소만 (예: "Artist1 / Artist2" -> "Artist1")
+    if is_artist:
         s = re.split(r'[,/&]|\(', s)[0].strip()
 
-    # [공통 정제]
-    s = re.sub(r'\(.*?\)|\[.*?\]|\{.*?\}', ' ', s)
-    s = re.sub(r'\d{2,4}\.\d{2}\.\d{2}', ' ', s)
-    s = re.sub(r'^\d{1,3}[\s\.\-_/]+', '', s.strip())
+    # [3] 특수문자 제거 (한글, 영어, 숫자, 일본어 유지)
     s = re.sub(r'[^\w\s가-힣ぁ-んァ-ヶー一-龠\u4e00-\u9fff]', ' ', s)
-    # [추가] 마지막에 혹시 남았을지 모르는 코드형 문자열 제거 (선택 사항)
+
+    # 파일명 앞의 순번 숫자 (01. , 105. 등) 제거
+    s = re.sub(r'^\d+[\s\.]+', '', s.strip())
     s = re.sub(r'\s{2,}', ' ', s)
+
     return s.strip()
 
 
 def fetch_metadata_smart(artist, album, title, folder_type=None):
-    # 전략 가져오기 (기본값 설정)
     strategy = META_STRATEGIES.get(folder_type, {"priority": ["deezer"], "clean": "western"})
     clean_mode = strategy["clean"]
 
-    # 1. 아티스트/앨범명 정제
     q_art = clean_query_text(artist, is_artist=True, folder_mode=clean_mode)
-    q_alb = clean_query_text(album, is_artist=False, folder_mode=clean_mode)
     q_tit = clean_query_text(title, is_artist=False, folder_mode=clean_mode)
+    q_alb = clean_query_text(album, is_artist=False, folder_mode=clean_mode)
 
-    if not q_art and not q_alb and not q_tit: return None
+    # '외국' 폴더명이 앨범명으로 들어오는 것 방지
+    if folder_type == "외국" and (q_alb.lower() == "외국" or "totp" in q_alb.lower()):
+        q_alb = ""
 
-    # 2. 폴더별 고유 검색 전략 분기
+    if not q_art and not q_tit: return None
+
+    # 전략 순서: 1.아티스트+제목, 2.아티스트+앨범, 3.제목만
     strategies = []
     if q_art and q_tit: strategies.append((q_art, q_tit))
+    if q_art and q_alb: strategies.append((q_art, q_alb))
+    if q_tit and len(q_tit) > 5: strategies.append(("", q_tit))
 
-    if folder_type == "국내":
-        if q_art and q_alb: strategies.append((q_art, q_alb))
-        if q_art: strategies.append((q_art, ""))
-    elif folder_type == "OST":
-        if q_alb: strategies.append(("", q_alb))
-        if q_tit: strategies.append(("", q_tit))
-    elif folder_type == "클래식":
-        if q_art and q_tit: strategies.append((q_art, q_tit))
-    else:  # 외국, 일본, DSD 포함 기본 전략
-        if q_art and q_alb: strategies.append((q_art, q_alb))
-        if q_art: strategies.append((q_art, ""))
-
-    # 3. 전략 순서대로 엔진 실행
     for a_q, b_q in strategies:
         for engine in strategy["priority"]:
-            res = None
-            if engine == "deezer":
-                res = fetch_deezer_metadata(a_q, b_q)
-            elif engine == "maniadb":
-                res = fetch_maniadb_metadata(a_q, b_q)
-
+            res = fetch_deezer_metadata(a_q, b_q) if engine == "deezer" else fetch_maniadb_metadata(a_q, b_q)
             if res: return res
-        time.sleep(0.3)
+        time.sleep(0.2)
     return None
 
+def fetch_deezer_metadata(artist, title_or_album):
+    # 고급 검색(Fielded Search) 시도: 아티스트와 제목을 명확히 구분하여 요청
+    if artist and title_or_album:
+        try:
+            # 1. 트랙 단위 고급 검색 (가장 정확함)
+            q = f'artist:"{artist}" track:"{title_or_album}"'
+            url = f"https://api.deezer.com/search?q={urllib.parse.quote(q)}&limit=1"
+            res = requests.get(url, timeout=5).json()
+            if res.get("data") and len(res["data"]) > 0:
+                track = res["data"][0]
+                alb = track.get('album', {})
+                return {
+                    "poster": alb.get('cover_xl'),
+                    "album_artist": track.get('artist', {}).get('name')
+                }
+        except: pass
 
-def fetch_deezer_metadata(artist, album):
-    # 1. 앨범(Album) 전용 검색 시도
+    # 2. 일반 검색 (기존 방식 - 백업용)
     try:
-        url = f"https://api.deezer.com/search/album?q={urllib.parse.quote(f'{artist} {album}')}&limit=1"
+        url = f"https://api.deezer.com/search?q={urllib.parse.quote(f'{artist} {title_or_album}')}&limit=1"
         res = requests.get(url, timeout=5).json()
         if res.get("data") and len(res["data"]) > 0:
-            alb_id = res["data"][0]['id']
-            d = requests.get(f"https://api.deezer.com/album/{alb_id}", timeout=5).json()
-            return {
-                "poster": d.get('cover_xl'),
-                "genre": d.get('genres', {}).get('data', [{}])[0].get('name') if d.get('genres') else None,
-                "release_date": d.get('release_date'),
-                "album_artist": d.get('artist', {}).get('name')
-            }
-    except:
-        pass
+            alb = res["data"][0].get('album', {})
+            if alb.get('cover_xl'):
+                return {"poster": alb.get('cover_xl'), "album_artist": res["data"][0].get('artist', {}).get('name')}
+    except: pass
+    return None
 
     # 2. 일반 검색 시도 (트랙 단위 - 앨범이 없는 곡일 때 효과적)
     try:
@@ -941,10 +971,10 @@ def start_metadata_update_thread(query_tag=None):
                         with update_lock:
                             up_st["current"] += 1
                             icon = "✅" if res else "❌"
+                            # [개선] 아티스트와 제목을 정제해서 로그에 함께 표시
                             log_art = clean_query_text(r['artist'], is_artist=True)
-                            # 성공/실패 여부와 상관없이 무조건 로그 업데이트 (번호 점프 방지)
-                            up_st[
-                                "last_log"] = f"[{display_name}] {up_st['current']}/{up_st['total']} | {log_art} -> {icon}"
+                            log_tit = clean_query_text(r['title'], is_artist=False)
+                            up_st["last_log"] = f"[{display_name}] {up_st['current']}/{up_st['total']} | {log_art} - {log_tit} -> {icon}"
                     except Exception as e:
                         with update_lock:
                             up_st["current"] += 1
@@ -1238,6 +1268,7 @@ def get_meta():
 # 1. 통합 검색 API (아티스트, 앨범, 노래를 한 번에!)
 @app.route('/api/library/search_integrated')
 def search_integrated():
+    """애플뮤직 스타일 통합 검색 (아티스트, 앨범, 노래 한 번에 조회)"""
     q = request.args.get('q', '').strip()
     if not q: return jsonify({"artists": [], "albums": [], "songs": []})
 
@@ -1246,7 +1277,7 @@ def search_integrated():
             conn.row_factory = sqlite3.Row
             search_val = f"%{q}%"
 
-            # (1) 아티스트 검색: 최대 5명
+            # 1. 아티스트 검색 (최대 5명 - 원형 프로필용)
             artists = conn.execute(
                 """SELECT TRIM(artist) as name, MAX(meta_poster) as cover
                    FROM global_songs
@@ -1255,7 +1286,7 @@ def search_integrated():
                 (search_val,)
             ).fetchall()
 
-            # (2) 앨범 검색: 최대 15개
+            # 2. 앨범 검색 (최대 15개 - 가로 스크롤용)
             albums = conn.execute(
                 """SELECT albumName as name, artist, MAX(meta_poster) as imageUrl,
                           CAST(MAX(SUBSTR(release_date, 1, 4)) AS INTEGER) as year
@@ -1265,7 +1296,7 @@ def search_integrated():
                 (search_val,)
             ).fetchall()
 
-            # (3) 노래 검색: 최대 50곡
+            # 3. 노래 검색 (최대 50곡 - 세로 리스트용)
             songs = conn.execute(
                 "SELECT * FROM global_songs WHERE name LIKE ? OR artist LIKE ? LIMIT 50",
                 (search_val, search_val)
@@ -1359,13 +1390,10 @@ def get_library_artists_paged(folder_type):
     try:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
+            # 캐시 테이블 조회로 성능 극대화
             rows = conn.execute(
-                """SELECT TRIM(artist) as name, MAX(meta_poster) as cover
-                   FROM global_songs
-                   WHERE parent_path LIKE ? AND artist != '' AND artist != 'Unknown Artist'
-                   GROUP BY UPPER(TRIM(artist))
-                   ORDER BY name ASC LIMIT ? OFFSET ?""",
-                (f"{folder_type}%", limit, offset)
+                "SELECT artist_name as name, cover FROM artists_cache WHERE folder_type = ? ORDER BY name ASC LIMIT ? OFFSET ?",
+                (folder_type, limit, offset)
             ).fetchall()
             return jsonify([dict(r) for r in rows])
     except:
