@@ -111,7 +111,9 @@ fun App(
                                 searchViewModel.loadThemeDetails(theme)
                                 navController.navigate("theme_detail/${theme.name}")
                             },
-                            onNavigateToArtistGrid = { folderName -> navController.navigate("artist_grid/$folderName") },
+                            onNavigateToArtistGrid = { folderName -> 
+                                navController.navigate("folder_browse/$folderName/$folderName") 
+                            },
                             onVoiceSearchClick = onVoiceSearchClick,
                             onDownloadSong = onDownloadSong,
                             onDeleteSong = onDeleteSong,
@@ -124,6 +126,23 @@ fun App(
                                     restoreState = true
                                 }
                             }
+                        )
+                    }
+                    composable(
+                        "folder_browse/{path}/{title}",
+                        arguments = listOf(
+                            navArgument("path") { type = NavType.StringType },
+                            navArgument("title") { type = NavType.StringType }
+                        )
+                    ) { backStackEntry ->
+                        val path = backStackEntry.arguments?.getString("path") ?: ""
+                        val title = backStackEntry.arguments?.getString("title") ?: ""
+                        FolderBrowseScreen(
+                            apiService = searchViewModel.getApiService(),
+                            initialPath = path,
+                            title = title,
+                            onSongClick = { song, list -> musicPlayerViewModel.playSong(song, list) },
+                            onBack = { navController.popBackStack() }
                         )
                     }
                     composable("artist_grid/{folderType}") { backStackEntry ->

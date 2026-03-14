@@ -61,6 +61,12 @@ class MusicApiServiceImpl(private val client: io.ktor.client.HttpClient) : Music
         }
     }
 
+    override suspend fun browseLibrary(path: String): List<BrowseItem> {
+        return client.get("${BASE_URL}api/library/browse") {
+            parameter("path", path)
+        }.body()
+    }
+
     private fun cleanSearchTerm(term: String): String {
         return term.replace(Regex("\\(.*?\\)"), "") 
             .replace(Regex("\\[.*?\\]"), "") 

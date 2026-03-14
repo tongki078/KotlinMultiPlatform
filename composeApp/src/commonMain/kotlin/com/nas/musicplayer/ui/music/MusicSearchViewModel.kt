@@ -65,7 +65,7 @@ data class MusicSearchUiState(
     val downloadedSongKeys: Set<String> = emptySet()
 )
 
-class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel() {
+class MusicSearchViewModel(val repository: MusicRepository) : ViewModel() {
 
     private val musicApiService = MusicApiServiceImpl(httpClient)
     private var allLocalSongs: List<Song> = emptyList()
@@ -96,6 +96,8 @@ class MusicSearchViewModel(private val repository: MusicRepository) : ViewModel(
             initializer { MusicSearchViewModel(musicRepository) }
         }
     }
+
+    fun getApiService(): MusicApiService = musicApiService
 
     fun loadArtistsPaged(folderType: String, isRefresh: Boolean = false) {
         if (isPagingLoading) return
