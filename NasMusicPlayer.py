@@ -31,7 +31,7 @@ META_STRATEGIES = {
     "국내":   {"priority": ["maniadb", "deezer"], "clean": "korean"},
     "외국":   {"priority": ["itunes", "deezer"], "clean": "western"},
     "일본":   {"priority": ["itunes", "deezer"], "clean": "western"},
-    "클래식": {"priority": ["itunes", "deezer"], "clean": "western"},
+    "클래식": {"priority": ["deezer", "itunes"], "clean": "classical"},
     "DSD":    {"priority": ["itunes", "deezer"], "clean": "western"},
     "OST":    {"priority": ["itunes", "deezer"], "clean": "western"}
 }
@@ -161,6 +161,19 @@ MONITOR_HTML = '''
                             <span id="idx-speed" class="stat-value">0</span>
                             <span class="stat-label">처리 속도 (곡/초)</span>
                         </div>
+                    </div>
+                    <!-- 인덱싱 엔진 상태 박스 내부, stat-grid 아래에 추가 -->
+                    <div class="filter-bar" style="margin-top:20px; display: flex; gap: 8px; background: rgba(255,255,255,0.05); padding: 12px; border-radius: 10px;">
+                        <select id="scan-target" style="flex: 1; background: #020617; border: 1px solid var(--border); color: white; padding: 8px;">
+                            <option value="전체">📂 라이브러리 전체</option>
+                            <option value="국내">🇰🇷 국내 폴더</option>
+                            <option value="외국">🌎 외국 폴더</option>
+                            <option value="일본">🇯🇵 일본</option>
+                            <option value="클래식">🎻 클래식</option>
+                            <option value="DSD">💿 DSD</option>
+                            <option value="OST">🎬 OST</option>
+                        </select>
+                        <button onclick="startScan()" style="background: #6366f1; white-space: nowrap; padding: 8px 16px;">⚡ 선택 폴더 재스캔</button>
                     </div>
                     <div class="progress-wrapper">
                         <div class="progress-info">
@@ -320,8 +333,12 @@ MONITOR_HTML = '''
                             <td style="padding:12px; color:#64748b;">${r.id}</td>
                             <td style="padding:12px; font-weight:600;">${r.name || '-'}</td>
                             <td style="padding:12px; color:var(--accent); font-weight:500;">${r.artist || '-'}</td>
+                            <td style="padding:12px;">${r.albumName || '-'}</td>
                             <td style="padding:12px; text-align:center;">${r.meta_poster && r.meta_poster !== 'FAIL' ? '✅' : '❌'}</td>
-                            <td style="padding:12px; font-size:12px; color:#94a3b8;">${r.genre || '-'}</td>
+                            <td style="padding:12px; text-align:center;">
+                                <button onclick="openManualMatch(${r.id}, '${(r.artist||'').replace(/'/g, "\\'")}', '${(r.name||'').replace(/'/g, "\\'")}', '${(r.albumName||'').replace(/'/g, "\\'")}')"
+                                        style="padding: 4px 8px; font-size: 11px; background:#4f46e5;">수동</button>
+                            </td>
                         </tr>`).join('');
                 }
                 document.getElementById('exp-page').innerText = page + ' 페이지';
@@ -330,6 +347,72 @@ MONITOR_HTML = '''
                 tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--danger); padding:20px;">데이터 로딩 중 치명적 오류 발생</td></tr>`;
             }
         }
+
+        let currentManualTarget = null;
+
+        function openManualMatch(id, artist, title, album) {
+            currentManualTarget = { id, artist, album };
+            document.getElementById('manual-modal').style.display = 'flex';
+            document.getElementById('manual-search-q').value = `${artist} ${title}`;
+            document.getElementById('manual-results').innerHTML = '<p style="color:#94a3b8;">검색 버튼을 눌러주세요.</p>';
+        }
+
+        function closeManualMatch() {
+            document.getElementById('manual-modal').style.display = 'none';
+        }
+
+        async function searchManual() {
+            const q = document.getElementById('manual-search-q').value;
+            const resDiv = document.getElementById('manual-results');
+            resDiv.innerHTML = '<p style="color:var(--accent);">검색 중...</p>';
+
+            try {
+                const res = await fetch(`/api/admin/search_meta?q=${encodeURIComponent(q)}`);
+                const data = await res.json();
+
+                if (data.length === 0) {
+                    resDiv.innerHTML = '<p style="color:var(--danger);">결과가 없습니다.</p>';
+                    return;
+                }
+
+                resDiv.innerHTML = data.map(item => `
+                    <div style="cursor:pointer; border:1px solid #334155; padding:8px; border-radius:8px; text-align:center; transition:0.2s;"
+                         onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='#334155'"
+                         onclick="applyManualMeta('${item.poster.replace(/'/g, "\\'")}')">
+                        <img src="${item.poster}" style="width:100%; aspect-ratio:1; border-radius:4px; object-fit:cover; margin-bottom:8px;">
+                        <div style="font-size:11px; font-weight:bold; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:white;">${item.artist}</div>
+                        <div style="font-size:10px; color:#94a3b8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${item.album}</div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                resDiv.innerHTML = '<p style="color:var(--danger);">검색 중 오류 발생</p>';
+            }
+        }
+
+        async function applyManualMeta(poster) {
+            if (!confirm("이 이미지를 이 앨범의 모든 곡에 적용하시겠습니까?")) return;
+
+            try {
+                const res = await fetch('/api/admin/apply_meta', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        artist: currentManualTarget.artist,
+                        album: currentManualTarget.album,
+                        poster: poster
+                    })
+                });
+                const data = await res.json();
+                alert(data.message);
+                closeManualMatch();
+                loadExplorer(expPage); // 현재 페이지 새로고침
+            } catch (e) {
+                alert("적용 중 오류 발생");
+            }
+        }
+
+
+
 
         function movePage(d) {
             if(expPage + d >= 1) loadExplorer(expPage + d);
@@ -444,6 +527,24 @@ MONITOR_HTML = '''
                     addLog(d.message);
                 });
         }
+
+        async function startScan() {
+            const target = document.getElementById('scan-target').value;
+            if(!confirm(`[${target}] 폴더에서 새로운 파일을 검색하시겠습니까?\n(기존 데이터는 유지되며 새 파일만 추가됩니다.)`)) return;
+
+            try {
+                const res = await fetch(`/api/indexing/start?target=${encodeURIComponent(target)}`);
+                const data = await res.json();
+                if(data.status === 'ok') {
+                    addLog(`<span style="color:var(--accent); font-weight:bold;">[SCAN]</span> ${data.message}`);
+                } else {
+                    alert(data.message);
+                }
+            } catch(e) {
+                alert("서버 통신 오류가 발생했습니다.");
+            }
+        }
+
         function stopMeta() { fetch('/api/metadata/stop').then(r=>r.json()).then(d=>addLog(d.message)); }
         function resetFail() {
             // 1. 데이터 브라우저 탭에 있는 카테고리 선택기(exp-cat)에서 현재 선택된 카테고리를 가져옵니다.
@@ -466,6 +567,22 @@ MONITOR_HTML = '''
         updateStatus(); // 즉시 실행
         addLog("NasMusic Pro 관리 콘솔에 연결되었습니다.");
     </script>
+    <!-- 수동 매칭 모달 레이어 -->
+    <div id="manual-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:1000; justify-content:center; align-items:center; padding:20px;">
+        <div class="box" style="width:100%; max-width:700px; max-height:90vh; overflow-y:auto; border:2px solid var(--accent); position:relative;">
+            <div style="display:flex; justify-content:space-between; margin-bottom:20px;">
+                <h2 style="margin:0; color:var(--accent);">🛠️ 메타데이터 수동 매칭</h2>
+                <button class="secondary" onclick="closeManualMatch()" style="padding:5px 12px; cursor:pointer;">닫기</button>
+            </div>
+            <div class="filter-bar" style="margin-bottom:20px;">
+                <input type="text" id="manual-search-q" style="flex:1;" onkeyup="if(event.key==='Enter') searchManual()">
+                <button onclick="searchManual()">🔍 검색</button>
+            </div>
+            <div id="manual-results" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap:15px;">
+                <!-- 검색 결과 리스트 -->
+            </div>
+        </div>
+    </div>
 </body>
 </html>
 '''
@@ -567,45 +684,46 @@ def get_info(f, d):
     nm = os.path.splitext(f)[0]
     rel_dir = os.path.relpath(d, MUSIC_BASE)
     path_parts = rel_dir.split(os.sep)
+    top_folder = path_parts[0]
 
     art, tit = ("Unknown Artist", nm)
 
-    if " - " in nm:
-        parts = nm.split(" - ", 1)
-        art = parts[0].split(". ", 1)[-1].strip() if ". " in parts[0] else parts[0].strip()
-        tit = parts[1].strip()
+    # [클래식 분기]
+    if top_folder == "클래식":
+        # 1. 아티스트(작곡가): 폴더명(클래식/작곡가/...)을 최우선 신뢰
+        art = path_parts[1] if len(path_parts) > 1 else "Classical"
 
-    top_folder = path_parts[0]
+        # 2. 파일명 정제 (앞의 기호 및 숫자 제거)
+        clean_nm = re.sub(r'^[0-9\s\.\-_/]+', '', nm).strip()
 
-    if top_folder == "OST" or "OST" in top_folder:
-        if art.upper().startswith("CD") or art.isdigit():
-            art = os.path.basename(d)
-        if len(tit) < 2: tit = nm
-    elif top_folder == "클래식":
-        art = path_parts[1] if len(path_parts) > 1 else "Classic"
-        tit = nm
-    elif top_folder == "외국":
-        # TOTP 패턴 제거 및 아티스트 재추출
-        if "TOTP" in nm.upper():
-            nm_clean = re.sub(r'(?i)TOTP\s+\d{4}\s+\d{2}\s+', '', nm)
-            if " - " in nm_clean:
-                p = nm_clean.split(" - ", 1)
-                art, tit = p[0].strip(), p[1].strip()
+        # 3. 곡 제목 추출: " - " 가 있으면 맨 앞부분만 곡 제목으로 (뒷부분 악장 정보 제외)
+        if " - " in clean_nm:
+            tit = clean_nm.split(" - ")[0].strip()
+        else:
+            tit = clean_nm
 
-        # 아티스트가 불분명하거나 '가수'일 경우 폴더 경로에서 진짜 이름 추출
-        if art in ["Unknown Artist", "가수"] or art.upper().startswith("CD") or art.upper() == "POP":
-            if len(path_parts) >= 3 and path_parts[1] == "가수":
-                art = path_parts[2]
-            elif len(path_parts) > 1:
-                art = path_parts[1]
-            else:
-                art = "Pop"
-    elif top_folder == "국내":
-        if art == "Unknown Artist" or art.upper().startswith("CD"):
-            if len(path_parts) >= 3 and path_parts[1] == "가수":
-                art = path_parts[3] if len(path_parts) > 3 else path_parts[2]
-            else:
-                art = os.path.basename(d)
+        # 제목이 너무 짧으면 전체 파일명을 제목으로 사용
+        if len(tit) < 5: tit = clean_nm
+
+    # [그 외 폴더 분기]
+    else:
+        if " - " in nm:
+            parts = nm.split(" - ", 1)
+            art = parts[0].split(". ", 1)[-1].strip() if ". " in parts[0] else parts[0].strip()
+            tit = parts[1].strip()
+
+        if top_folder == "OST" or "OST" in top_folder:
+            if art.upper().startswith("CD") or art.isdigit(): art = os.path.basename(d)
+            if len(tit) < 2: tit = nm
+        elif top_folder == "외국":
+            if art == "Unknown Artist" or art.upper().startswith("CD"):
+                art = path_parts[1] if len(path_parts) > 1 else "Pop"
+        elif top_folder == "국내":
+            if art == "Unknown Artist" or art.upper().startswith("CD"):
+                if len(path_parts) >= 3 and path_parts[1] == "가수":
+                    art = path_parts[3] if len(path_parts) > 3 else path_parts[2]
+                else:
+                    art = os.path.basename(d)
 
     rel_file = os.path.join(rel_dir, f)
     stream_url = f"{BASE_URL}/stream/{urllib.parse.quote(rel_file)}"
@@ -642,23 +760,24 @@ def process_path(full_path):
         return None
 
 
-def scan_all_songs():
+def scan_all_songs(target_folder=None):
     global idx_st
     if idx_st["is_running"]: return
+
+    # target_folder가 있으면 해당 폴더만, 없으면 전체(MUSIC_BASE)
+    scan_root = os.path.join(MUSIC_BASE, target_folder) if target_folder and target_folder != "전체" else MUSIC_BASE
+    display_name = target_folder if target_folder and target_folder != "전체" else "전체"
 
     idx_st.update({
         "is_running": True, "songs_found": 0, "processed_dirs": 0, "total_dirs": 0,
         "start_time": time.time(), "speed": 0, "eta": "계산 중...",
-        "last_log": "🚀 1.7M 대용량 스캔 엔진 가동! 이어하기 확인 및 파일 목록 수집 중..."
+        "last_log": f"🚀 [{display_name}] 스캔 엔진 가동! 목록 수집 중..."
     })
 
     try:
-        # 1. DB 설정 및 임시 폴더 지정 (8TB 볼륨 사용)
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute(f"PRAGMA temp_store_directory = '{WRITEABLE_DIR}'")
             conn.execute("PRAGMA journal_mode = WAL")
-            # conn.execute(
-            #     "CREATE TABLE IF NOT EXISTS global_songs_staging (name TEXT, artist TEXT, albumName TEXT, stream_url TEXT, parent_path TEXT, meta_poster TEXT)")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS global_songs_staging (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -667,33 +786,27 @@ def scan_all_songs():
                     genre TEXT, release_date TEXT, album_artist TEXT
                 )
             """)
-            # staging 테이블에도 albumName 컬럼 확인
-            try:
-                conn.execute("ALTER TABLE global_songs_staging ADD COLUMN albumName TEXT")
-            except:
-                pass
+            try: conn.execute("ALTER TABLE global_songs_staging ADD COLUMN albumName TEXT")
+            except: pass
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_staging_url ON global_songs_staging(stream_url)")
 
-            # 이어하기 핵심: 이미 인덱싱된 URL 확인
-            cursor = conn.execute(
-                "SELECT stream_url FROM global_songs_staging UNION SELECT stream_url FROM global_songs")
+            cursor = conn.execute("SELECT stream_url FROM global_songs_staging UNION SELECT stream_url FROM global_songs")
             indexed_urls = {row[0] for row in cursor.fetchall()}
 
-        # 2. 파일 목록 수집 (find)
-        command = ['find', MUSIC_BASE, '-type', 'f', '(', '-iname', '*.mp3', '-o', '-iname', '*.m4a', '-o', '-iname',
+        # [수정] scan_root를 사용하여 선택한 폴더만 탐색
+        command = ['find', scan_root, '-type', 'f', '(', '-iname', '*.mp3', '-o', '-iname', '*.m4a', '-o', '-iname',
                    '*.flac', '-o', '-iname', '*.dsf', ')']
         all_files = []
         proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8')
         for line in iter(proc.stdout.readline, ''):
             all_files.append(line.strip())
-            if len(all_files) % 20000 == 0:
-                idx_st["last_log"] = f"🔍 NAS 파일 탐색 중... {len(all_files):,}개 발견"
+            if len(all_files) % 10000 == 0:
+                idx_st["last_log"] = f"🔍 {display_name} 파일 탐색 중... {len(all_files):,}개 발견"
         proc.wait()
 
         total_files = len(all_files)
         idx_st["total_dirs"] = total_files
 
-        # 3. 신규 파일 필터링 (이어하기 로직)
         files_to_process = []
         skipped_count = 0
         for f in all_files:
@@ -707,10 +820,9 @@ def scan_all_songs():
         idx_st["songs_found"] = skipped_count
 
         if not files_to_process:
-            idx_st["last_log"] = f"✅ 처리 완료된 {skipped_count:,}곡이 모두 최신입니다. 동기화를 진행합니다."
+            idx_st["last_log"] = f"✅ [{display_name}] 추가할 새 파일이 없습니다."
         else:
-            idx_st["last_log"] = f"⏭️ 이미 완료된 {skipped_count:,}곡을 건너뛰고, 남은 {len(files_to_process):,}곡 작업을 시작합니다."
-
+            idx_st["last_log"] = f"⏭️ {skipped_count:,}곡 유지, 새 파일 {len(files_to_process):,}곡 처리 시작!"
             batch = []
             BATCH_SIZE = 5000
             processing_start = time.time()
@@ -721,38 +833,27 @@ def scan_all_songs():
                 for future in as_completed(futures):
                     res = future.result()
                     if res: batch.append(res)
-
                     if len(batch) >= BATCH_SIZE:
                         with sqlite3.connect(DB_PATH) as conn:
-                            conn.executemany("INSERT OR IGNORE INTO global_songs_staging VALUES (?,?,?,?,?,NULL)",
-                                             batch)
+                            conn.executemany("INSERT OR IGNORE INTO global_songs_staging (name, artist, albumName, stream_url, parent_path, meta_poster) VALUES (?,?,?,?,?,NULL)", batch)
                             conn.commit()
                         done_in_this_run += len(batch)
                         idx_st["processed_dirs"] = skipped_count + done_in_this_run
-                        idx_st["songs_found"] = idx_st["processed_dirs"]
-
                         elapsed = time.time() - processing_start
                         speed = int(done_in_this_run / elapsed) if elapsed > 0 else 0
-                        eta = (len(files_to_process) - done_in_this_run) / speed if speed > 0 else 0
-                        idx_st.update({
-                            "speed": speed,
-                            "eta": time.strftime("%H:%M:%S", time.gmtime(eta)),
-                            "last_log": f"⏳ {idx_st['processed_dirs']:,} / {total_files:,} 처리 중... ({speed}곡/초)"
-                        })
+                        idx_st.update({"speed": speed, "last_log": f"⏳ {display_name} 처리 중: {idx_st['processed_dirs']:,} / {total_files:,}"})
                         batch = []
 
             if batch:
                 with sqlite3.connect(DB_PATH) as conn:
-                    conn.executemany("INSERT OR IGNORE INTO global_songs_staging VALUES (?,?,?,?,?,NULL)", batch)
+                    conn.executemany("INSERT OR IGNORE INTO global_songs_staging (name, artist, albumName, stream_url, parent_path, meta_poster) VALUES (?,?,?,?,?,NULL)", batch)
                     conn.commit()
 
-        # 4. 최종 동기화
-        idx_st["last_log"] = "💾 마지막 단계: 전체 라이브러리 병합 및 인덱싱..."
+        idx_st["last_log"] = f"💾 [{display_name}] 라이브러리 병합 중..."
         finalize_library()
 
     except Exception as e:
-        idx_st.update({"is_running": False, "last_log": f"❌ 오류 발생: {str(e)}"})
-
+        idx_st.update({"is_running": False, "last_log": f"❌ 오류: {str(e)}"})
 
 def finalize_library():
     with sqlite3.connect(DB_PATH) as conn:
@@ -829,92 +930,105 @@ def clean_query_text(text, is_artist=False, folder_mode="western"):
     if not text or text == 'Unknown Artist': return ""
     s = str(text)
 
-    if folder_mode == "western":
-        # [1] TOTP 패턴 유연하게 대응 (TOTP-1966-18, TOTP 1966 18 등)
-        s = re.sub(r'(?i)TOTP[\s\-_]?\d{4}[\s\-_]?\d{2}', '', s)
+    # [1] 클래식 전용 정제
+    if folder_mode == "classical":
+        if not is_artist:
+            # 1. 조성(Key) 정보의 다국어 나열 제거 (sol maggiore G-Dur 등)
+            s = re.sub(r'(?i)\b(sol|maggiore|majeur|Dur|moll|flat|sharp|major|minor)\b', ' ', s)
 
-        # [2] 불필요한 잡음 제거 (CD 1, Track 1, Part 1, Disc 1 등)
-        s = re.sub(r'(?i)\b(CD|Track|Part|Disc|Side|Vol|Volume)\s?\d+\b', '', s)
+            # 2. 작품 번호(Op, K, BWV, KV, D, RV 등)를 찾으면 그 뒤의 악장 정보는 과감히 절삭
+            # 예: "Symphony No.5 Op.67 - I. Allegro" -> "Symphony No.5 Op.67"
+            match = re.search(r'(?i)\b(Op|No|K|KV|BWV|D|RV|TWV|HWV)\.?\s?\d+', s)
+            if match:
+                # 작품 번호 뒤에 오는 " - " 나 악장 정보(I. II.) 기점으로 잘라냄
+                s = s[:match.end() + 15]  # 번호 뒤에 약간의 여유만 두고 잘라냄
+        else:
+            # 연주자 정보 제거 (conducted by, orchestra 등)
+            s = re.sub(r'(?i)(violin|piano|cello|conducted|orch\.|ensemble|philharmonic).*$', '', s)
 
-        # [3] 라이브 공연 정보 제거 (Live at... 이후는 검색 방해)
-        s = re.sub(r'(?i)\bLive\s+(at|in)?\s?.*$', '', s)
-
+    # [2] 서구권/클래식 공통 (기존 유지)
+    if folder_mode in ["western", "classical"]:
+        s = re.sub(r'(?i)TOTP[\s\-_]?\d{4}[\s\-_]?\d{2}', ' ', s)
+        s = re.sub(r'(?i)\b(CD|Track|Part|Disc|Side|Vol|Volume|Selection)\s?\d+\b', ' ', s)
         if is_artist:
-            # 피처링 구분자 정교화 (Featuring, feat, ft, with, vs 등)
-            s = re.split(r'(?i)\s+(featuring|feat|ft|with|vs|vwo|v\.w\.o)\b', s)[0]
+            s = re.split(r'(?i)\s+(featuring|feat|ft|with|vs|cond\.|dir\.)\b', s)[0]
 
-    # [4] 공통: 괄호 내용 및 날짜/연도 제거
+    # [3] 전 카테고리 공통
     s = re.sub(r'\(.*?\)|\[.*?\]|\{.*?\}', ' ', s)
-    s = re.sub(r'\d{2,4}[\.\-/]\d{2}[\.\-/]\d{2}', ' ', s)  # 날짜 형식
-    s = re.sub(r'\b(19|20)\d{2}\b', ' ', s)  # 연도 4자리
+    s = re.sub(r'\d{2,4}[\.\-/]\d{2}[\.\-/]\d{2}', ' ', s)
+    s = re.sub(r'\b(19|20)\d{2}\b', ' ', s)
 
-    # [5] 특수문자 보존 (외국 모드는 핵심 기호 보존)
-    if folder_mode == "western":
-        # 서구권 이름에 필수적인 &, ', !, -, . 기호는 유지
-        s = re.sub(r"[^a-zA-Z0-9\s&'!\.\-]", " ", s)
+    if folder_mode in ["western", "classical"]:
+        s = re.sub(r"[^a-zA-Z0-9\s&'!\.\-\u00C0-\u00FF]", " ", s) # 유럽 악센트 보존
     else:
         s = re.sub(r'[^\w\s가-힣ぁ-んァ-ヶー一-龠\u4e00-\u9fff]', ' ', s)
 
-    # [6] 앞부분 숫자/기호 정리 (01. Song -> Song)
     s = re.sub(r'^[0-9\s\.\-_/]+', '', s.strip())
     s = re.sub(r'\s{2,}', ' ', s)
     return s.strip()
 
 
 def fetch_metadata_smart(artist, album, title, folder_type=None):
-    strategy = META_STRATEGIES.get(folder_type, {"priority": ["itunes", "deezer"], "clean": "western"})
+    strategy = META_STRATEGIES.get(folder_type, {"priority": ["deezer"], "clean": "western"})
     clean_mode = strategy["clean"]
 
     q_art = clean_query_text(artist, is_artist=True, folder_mode=clean_mode)
     q_tit = clean_query_text(title, is_artist=False, folder_mode=clean_mode)
     q_alb = clean_query_text(album, is_artist=False, folder_mode=clean_mode)
 
-    if folder_type == "외국" and (q_alb.lower() == "외국" or "totp" in q_alb.lower()):
-        q_alb = ""
-
     if not q_art and not q_tit: return None
 
-    # 전략 순서 최적화
     strategies = []
-    if q_art and q_tit: strategies.append((q_art, q_tit))
-    if q_art and q_alb: strategies.append((q_art, q_alb))
-    if q_tit and len(q_tit) > 5: strategies.append(("", q_tit))
+    if folder_type == "클래식":
+        # 1. 작곡가 + 곡명 (표준)
+        strategies.append((q_art, q_tit))
+        # 2. 곡명만 (제목에 모든 정보가 있을 때 - 클래식에서 매우 강력함)
+        if len(q_tit) > 10:
+            strategies.append(("", q_tit))
+        # 3. 작곡가 + 앨범명
+        strategies.append((q_art, q_alb))
+    elif folder_type == "국내":
+        if q_art and q_tit: strategies.append((q_art, q_tit))
+        if q_art and q_alb: strategies.append((q_art, q_alb))
+    else:
+        if q_art and q_tit: strategies.append((q_art, q_tit))
+        if q_art and q_alb: strategies.append((q_art, q_alb))
 
     for a_q, b_q in strategies:
         for engine in strategy["priority"]:
-            if engine == "itunes":
-                res = fetch_itunes_metadata(a_q, b_q)
-            elif engine == "deezer":
-                res = fetch_deezer_metadata(a_q, b_q)
-            else:
-                res = fetch_maniadb_metadata(a_q, b_q)
+            res = None
+            if engine == "deezer": res = fetch_deezer_metadata(a_q, b_q)
+            elif engine == "itunes": res = fetch_itunes_metadata(a_q, b_q)
+            elif engine == "maniadb": res = fetch_maniadb_metadata(a_q, b_q)
             if res: return res
         time.sleep(0.1)
     return None
 
 def fetch_deezer_metadata(artist, title_or_album):
-    if not artist or not title_or_album: return None
+    if not title_or_album: return None
     try:
-        # 1. 고급 검색 (정확도 높음)
-        q = f'artist:"{artist}" track:"{title_or_album}"'
-        url = f"https://api.deezer.com/search?q={urllib.parse.quote(q)}&limit=1"
+        # 1. 필드 기반 정밀 검색
+        query = f'track:"{title_or_album}"'
+        if artist and artist != 'Unknown Artist':
+            query = f'artist:"{artist}" ' + query
+
+        url = f"https://api.deezer.com/search?q={urllib.parse.quote(query)}&limit=1"
         res = requests.get(url, timeout=5).json()
+
+        # 2. 결과 없으면 일반 텍스트 검색으로 재시도
+        if (not res.get("data") or len(res["data"]) == 0) and artist:
+            query_gen = f"{artist} {title_or_album}"
+            url = f"https://api.deezer.com/search?q={urllib.parse.quote(query_gen)}&limit=1"
+            res = requests.get(url, timeout=5).json()
+
         if res.get("data") and len(res["data"]) > 0:
             track = res["data"][0]
-            if track.get('album', {}).get('cover_xl'):
-                return {"poster": track['album']['cover_xl'], "album_artist": track.get('artist', {}).get('name')}
-
-        # 2. 일반 검색 (백업)
-        url = f"https://api.deezer.com/search?q={urllib.parse.quote(f'{artist} {title_or_album}')}&limit=1"
-        res = requests.get(url, timeout=5).json()
-        if res.get("data") and len(res["data"]) > 0:
-            alb = res["data"][0].get('album', {})
+            alb = track.get('album', {})
             if alb.get('cover_xl'):
-                return {"poster": alb.get('cover_xl'), "album_artist": res["data"][0].get('artist', {}).get('name')}
+                return {"poster": alb['cover_xl'], "album_artist": track.get('artist', {}).get('name')}
     except:
         pass
     return None
-
 
 def fetch_maniadb_metadata(artist, album):
     # 앨범으로 먼저 찾고, 없으면 곡(song)으로 한 번 더 찾습니다.
@@ -1136,54 +1250,56 @@ def browse_library():
         return jsonify({"error": "Path is required"}), 400
 
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        # 모든 DB 연결에 timeout=20 추가 권장
+        with sqlite3.connect(DB_PATH, timeout=20) as conn:
             conn.row_factory = sqlite3.Row
-
-            # 1. 현재 경로 하위에 더 깊은 폴더(Depth)가 있는지 확인
             search_path = path if path.endswith('/') else path + '/'
 
+            # 1. 하위 폴더 찾기
             rows = conn.execute("""
-                SELECT DISTINCT parent_path
-                FROM global_songs
+                SELECT DISTINCT parent_path FROM global_songs
                 WHERE parent_path LIKE ? AND parent_path != ?
             """, (f"{search_path}%", path)).fetchall()
 
             sub_folders = set()
             for r in rows:
-                # 현재 경로 이후의 첫 번째 폴더명만 추출
-                rel_path = r['parent_path'][len(search_path):]
-                first_segment = rel_path.split('/')[0]
-                if first_segment:
-                    sub_folders.add(first_segment)
+                rel = r['parent_path'][len(search_path):]
+                segment = rel.split('/')[0]
+                if segment: sub_folders.add(segment)
 
-            # 2. 하위 폴더가 있다면 -> 폴더 리스트 반환 (그리드용)
             if sub_folders:
                 result = []
-                for folder_name in sorted(list(sub_folders)):
-                    full_sub_path = f"{search_path}{folder_name}"
-
-                    # 해당 폴더의 대표 이미지(커버) 찾기
-                    img_row = conn.execute("""
+                for name in sorted(list(sub_folders)):
+                    full_p = f"{search_path}{name}"
+                    img = conn.execute("""
                         SELECT meta_poster FROM global_songs
                         WHERE parent_path LIKE ? AND meta_poster IS NOT NULL
                         AND meta_poster != 'FAIL' AND meta_poster != ''
-                        LIMIT 1
-                    """, (f"{full_sub_path}%",)).fetchone()
+                        ORDER BY meta_poster DESC LIMIT 1
+                    """, (f"{full_p}%",)).fetchone()
 
                     result.append({
-                        "name": folder_name,
-                        "path": full_sub_path,
-                        "is_dir": True,
-                        "cover": img_row[0] if img_row else None
+                        "name": name,
+                        "path": full_p,
+                        "is_dir": True,  # JSON Boolean (true)
+                        "cover": img[0] if img else None
                     })
                 return jsonify(result)
 
-            # 3. 하위 폴더가 없다면 -> 해당 폴더의 노래 리스트 반환
+            # 2. 하위 폴더 없으면 노래 목록 반환
             songs = conn.execute("""
-                SELECT *, 0 as is_dir FROM global_songs
-                WHERE parent_path = ? ORDER BY name
+                SELECT id, name, artist, albumName, stream_url, parent_path, meta_poster
+                FROM global_songs WHERE parent_path = ? ORDER BY name
             """, (path,)).fetchall()
-            return jsonify([dict(s) for s in songs])
+
+            # [핵심] Kotlin Boolean 호환 및 필드명 통일
+            song_result = []
+            for s in songs:
+                d = dict(s)
+                d['is_dir'] = False  # JSON Boolean (false)
+                d['path'] = d['parent_path']  # BrowseItem.path와 매칭
+                song_result.append(d)
+            return jsonify(song_result)
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1234,6 +1350,52 @@ def get_admin_data():
         import traceback
         traceback.print_exc()  # 상세 에러 스택트레이스 출력
         return jsonify([])
+
+
+@app.route('/api/admin/search_meta')
+def admin_search_meta():
+    q = request.args.get('q', '').strip()
+    if not q: return jsonify([])
+    try:
+        # Deezer API를 활용해 수동 검색 결과 10개 반환
+        url = f"https://api.deezer.com/search?q={urllib.parse.quote(q)}&limit=10"
+        res = requests.get(url, timeout=5).json()
+        results = []
+        if res.get("data"):
+            for t in res["data"]:
+                results.append({
+                    "title": t.get('title'),
+                    "artist": t.get('artist', {}).get('name'),
+                    "album": t.get('album', {}).get('title'),
+                    "poster": t.get('album', {}).get('cover_xl')
+                })
+        return jsonify(results)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
+@app.route('/api/admin/apply_meta', methods=['POST'])
+def admin_apply_meta():
+    data = request.json
+    artist = data.get('artist')
+    album = data.get('album')
+    poster = data.get('poster')
+
+    if not artist or not album or not poster:
+        return jsonify({"error": "필수 데이터 누락"}), 400
+
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            # 선택한 가수와 앨범명을 가진 모든 곡의 메타데이터를 일괄 업데이트 (매우 효율적)
+            conn.execute(
+                "UPDATE global_songs SET meta_poster=? WHERE artist=? AND albumName=?",
+                (poster, artist, album)
+            )
+            conn.commit()
+        return jsonify({"status": "ok", "message": f"[{artist} - {album}] 메타데이터가 일괄 적용되었습니다."})
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
 
 @app.route('/api/admin/query', methods=['POST'])
 def run_query():
@@ -1600,6 +1762,15 @@ def get_library_artists_paged(folder_type):
             return jsonify([dict(r) for r in rows])
     except:
         return jsonify([])
+
+@app.route('/api/indexing/start')
+def start_indexing():
+    target = request.args.get('target', '전체')
+    if not idx_st["is_running"]:
+        Thread(target=scan_all_songs, args=(target,)).start()
+        return jsonify({"status": "ok", "message": f"[{target}] 스캔을 시작합니다."})
+    else:
+        return jsonify({"status": "error", "message": "이미 다른 스캔이 진행 중입니다."})
 
 @app.route('/stream/<path:fp>')
 def stream(fp): return send_from_directory(MUSIC_BASE, urllib.parse.unquote(fp))
