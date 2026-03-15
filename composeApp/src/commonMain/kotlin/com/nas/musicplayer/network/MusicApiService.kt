@@ -11,6 +11,7 @@ data class Artist(
 
 @Serializable
 data class BrowseItem(
+    val id: Long? = null,
     val name: String,
     val path: String,
     val is_dir: Boolean,

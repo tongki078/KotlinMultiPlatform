@@ -174,16 +174,25 @@ MONITOR_HTML = '''
 
                 <div class="box">
                     <h2>🖼️ 메타데이터 매칭 현황</h2>
-                    <div class="stat-grid">
-                        <div class="stat-card">
-                            <span id="meta-success" class="stat-value" style="color: var(--success);">0</span>
-                            <span class="stat-label">매칭 성공 (OK)</span>
-                        </div>
-                        <div class="stat-card">
-                            <span id="meta-fail" class="stat-value" style="color: var(--danger);">0</span>
-                            <span class="stat-label">매칭 실패 (FAIL)</span>
-                        </div>
-                    </div>
+    <div class="stat-grid" style="grid-template-columns: repeat(2, 1fr); gap: 12px;">
+        <div class="stat-card">
+            <span id="meta-db-success" class="stat-value" style="color: var(--success);">0</span>
+            <span class="stat-label">전체 성공 (OK)</span>
+        </div>
+        <div class="stat-card">
+            <span id="meta-db-fail" class="stat-value" style="color: var(--danger);">0</span>
+            <span class="stat-label">전체 실패 (초기화대상)</span>
+        </div>
+        <!-- 실시간 세션 정보 (작동 시 강조됨) -->
+        <div class="stat-card" style="background: rgba(56, 189, 248, 0.05); border-color: rgba(56, 189, 248, 0.2);">
+            <span id="meta-session-success" class="stat-value" style="font-size: 1.3rem; color: var(--accent);">0</span>
+            <span class="stat-label" style="font-size: 0.75rem;">세션 성공</span>
+        </div>
+        <div class="stat-card" style="background: rgba(245, 158, 11, 0.05); border-color: rgba(245, 158, 11, 0.2);">
+            <span id="meta-session-fail" class="stat-value" style="font-size: 1.3rem; color: var(--warning);">0</span>
+            <span class="stat-label" style="font-size: 0.75rem;">세션 실패</span>
+        </div>
+    </div>
                     <div style="margin-top: 25px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
                         <button class="secondary" onclick="startMeta('국내')">🇰🇷 국내 엔진 가동</button>
                         <button class="secondary" onclick="startMeta('외국')">🌎 외국 엔진 가동</button>
@@ -390,27 +399,29 @@ MONITOR_HTML = '''
                 document.getElementById('idx-log').innerText = "🚀 " + d.last_log;
             });
 
-            fetch('/api/metadata/status').then(r=>r.json()).then(d=>{
-                const totalDbEl = document.getElementById('meta-db-total');
-                if(totalDbEl) totalDbEl.innerText = (d.db_total || 0).toLocaleString();
+    fetch('/api/metadata/status').then(r=>r.json()).then(d=>{
+        // 1. 전체 라이브러리 항목 (앨범/가수 그룹 기준)
+        const totalDbEl = document.getElementById('meta-db-total');
+        if(totalDbEl) totalDbEl.innerText = (d.db_total || 0).toLocaleString();
 
-                // 만약 엔진이 가동 중이면 세션 카운트를, 아니면 DB 전체 카운트를 표시
-                const successVal = d.is_running ? d.success : d.db_success;
-                const failVal = d.is_running ? d.fail : d.db_fail;
+        // 2. DB 전체 현황 (성공 / 실패+대기)
+        document.getElementById('meta-db-success').innerText = (d.db_success || 0).toLocaleString();
+        document.getElementById('meta-db-fail').innerText = ((d.db_fail || 0) + (d.db_pending || 0)).toLocaleString();
 
-                document.getElementById('meta-success').innerText = (successVal || 0).toLocaleString();
-                document.getElementById('meta-fail').innerText = (failVal || 0).toLocaleString();
+        // 3. 실시간 세션 현황
+        document.getElementById('meta-session-success').innerText = (d.success || 0).toLocaleString();
+        document.getElementById('meta-session-fail').innerText = (d.fail || 0).toLocaleString();
 
-                // 진행률 텍스트 보완
-                if(d.is_running) {
-                    document.getElementById('idx-log').innerText = `🔥 [${d.target}] 진행 중: ${d.current} / ${d.total} (실패: ${d.fail})`;
-                }
+        // 4. 로그 및 상태 텍스트
+        if(d.is_running) {
+            document.getElementById('idx-log').innerText = `🔥 [${d.target}] 진행 중: ${d.current} / ${d.total} (세션 실패: ${d.fail})`;
+        }
 
-                if(d.last_log && d.last_log !== lastMetaLog) {
-                    addLog(`<span style="color:var(--accent); font-weight:bold;">[META]</span> ${d.last_log}`);
-                    lastMetaLog = d.last_log;
-                }
-            });
+        if(d.last_log && d.last_log !== lastMetaLog) {
+            addLog(`<span style="color:var(--accent); font-weight:bold;">[META]</span> ${d.last_log}`);
+            lastMetaLog = d.last_log;
+        }
+    });
         }
 
         function startMeta(q) {
@@ -991,26 +1002,6 @@ def update_theme_incremental(category, name, path, poster_url=None):
     except Exception as e:
         print(f"[!] 테마 갱신 에러: {e}")
 
-# [보완] save_batch 오류 로깅 추가
-def save_batch(items):
-    try:
-        with sqlite3.connect(DB_PATH, timeout=60) as conn:
-            for art, alb, res in items:
-                if res and res.get('poster'):
-                    conn.execute(
-                        "UPDATE global_songs SET meta_poster=?, genre=?, release_date=?, album_artist=? WHERE artist=? AND albumName=?",
-                        (res['poster'], res.get('genre'), res.get('release_date'), res.get('album_artist'), art, alb))
-                    with update_lock:
-                        up_st["success"] += 1
-                else:
-                    conn.execute("UPDATE global_songs SET meta_poster='FAIL' WHERE artist=? AND albumName=?",
-                                 (art, alb))
-                    with update_lock:
-                        up_st["fail"] += 1
-            conn.commit()
-    except Exception as e:
-        with update_lock:
-            up_st["last_log"] = f"⚠️ DB 저장 오류: {str(e)}"
 
 def start_metadata_update_thread(query_tag=None):
     global up_st
@@ -1090,8 +1081,9 @@ def start_metadata_update_thread(query_tag=None):
                             with update_lock:
                                 up_st["fail"] += 1
                     conn.commit()
-            except:
-                pass
+            except Exception as e:
+                with update_lock:
+                    up_st["last_log"] = f"⚠️ DB 저장 오류: {str(e)}"
 
         Thread(target=db_worker, daemon=True).start()
 
@@ -1135,6 +1127,66 @@ def start_metadata_update_thread(query_tag=None):
         up_st["last_log"] = f"❌ {display_name} 엔진 중단됨: {str(e)}"
     finally:
         up_st["is_running"] = False
+
+# [추가] 폴더 계층 구조 탐색 API (그리드 탐색용)
+@app.route('/api/library/browse')
+def browse_library():
+    path = request.args.get('path', '').strip()
+    if not path:
+        return jsonify({"error": "Path is required"}), 400
+
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+
+            # 1. 현재 경로 하위에 더 깊은 폴더(Depth)가 있는지 확인
+            search_path = path if path.endswith('/') else path + '/'
+
+            rows = conn.execute("""
+                SELECT DISTINCT parent_path
+                FROM global_songs
+                WHERE parent_path LIKE ? AND parent_path != ?
+            """, (f"{search_path}%", path)).fetchall()
+
+            sub_folders = set()
+            for r in rows:
+                # 현재 경로 이후의 첫 번째 폴더명만 추출
+                rel_path = r['parent_path'][len(search_path):]
+                first_segment = rel_path.split('/')[0]
+                if first_segment:
+                    sub_folders.add(first_segment)
+
+            # 2. 하위 폴더가 있다면 -> 폴더 리스트 반환 (그리드용)
+            if sub_folders:
+                result = []
+                for folder_name in sorted(list(sub_folders)):
+                    full_sub_path = f"{search_path}{folder_name}"
+
+                    # 해당 폴더의 대표 이미지(커버) 찾기
+                    img_row = conn.execute("""
+                        SELECT meta_poster FROM global_songs
+                        WHERE parent_path LIKE ? AND meta_poster IS NOT NULL
+                        AND meta_poster != 'FAIL' AND meta_poster != ''
+                        LIMIT 1
+                    """, (f"{full_sub_path}%",)).fetchone()
+
+                    result.append({
+                        "name": folder_name,
+                        "path": full_sub_path,
+                        "is_dir": True,
+                        "cover": img_row[0] if img_row else None
+                    })
+                return jsonify(result)
+
+            # 3. 하위 폴더가 없다면 -> 해당 폴더의 노래 리스트 반환
+            songs = conn.execute("""
+                SELECT *, 0 as is_dir FROM global_songs
+                WHERE parent_path = ? ORDER BY name
+            """, (path,)).fetchall()
+            return jsonify([dict(s) for s in songs])
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/admin/data', methods=['GET'])
 def get_admin_data():
@@ -1252,7 +1304,7 @@ def get_top100():
         # 1. 멜론 주간 차트 기준 상대 경로 계산
         base_rel_path = os.path.relpath(WEEKLY_CHART_PATH, MUSIC_BASE).replace('\\', '/')
 
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(DB_PATH, timeout=20) as conn:
             conn.row_factory = sqlite3.Row
 
             # 2. DB에서 해당 경로 하위의 가장 최신 'parent_path' 하나를 추출
@@ -1548,65 +1600,6 @@ def get_library_artists_paged(folder_type):
             return jsonify([dict(r) for r in rows])
     except:
         return jsonify([])
-
-@app.route('/api/library/browse')
-def browse_library():
-    path = request.args.get('path', '').strip()
-    if not path:
-        return jsonify({"error": "Path is required"}), 400
-
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-
-            # 1. 현재 경로 하위에 더 깊은 폴더(Depth)가 있는지 확인
-            search_path = path if path.endswith('/') else path + '/'
-
-            rows = conn.execute("""
-                SELECT DISTINCT parent_path
-                FROM global_songs
-                WHERE parent_path LIKE ? AND parent_path != ?
-            """, (f"{search_path}%", path)).fetchall()
-
-            sub_folders = set()
-            for r in rows:
-                # 현재 경로 이후의 첫 번째 폴더명만 추출
-                rel_path = r['parent_path'][len(search_path):]
-                first_segment = rel_path.split('/')[0]
-                if first_segment:
-                    sub_folders.add(first_segment)
-
-            # 2. 하위 폴더가 있다면 -> 폴더 리스트 반환 (그리드용)
-            if sub_folders:
-                result = []
-                for folder_name in sorted(list(sub_folders)):
-                    full_sub_path = f"{search_path}{folder_name}"
-
-                    # 해당 폴더의 대표 이미지(커버) 찾기
-                    img_row = conn.execute("""
-                        SELECT meta_poster FROM global_songs
-                        WHERE parent_path LIKE ? AND meta_poster IS NOT NULL
-                        AND meta_poster != 'FAIL' AND meta_poster != ''
-                        LIMIT 1
-                    """, (f"{full_sub_path}%",)).fetchone()
-
-                    result.append({
-                        "name": folder_name,
-                        "path": full_sub_path,
-                        "is_dir": True,
-                        "cover": img_row[0] if img_row else None
-                    })
-                return jsonify(result)
-
-            # 3. 하위 폴더가 없다면 -> 해당 폴더의 노래 리스트 반환
-            songs = conn.execute("""
-                SELECT *, 0 as is_dir FROM global_songs
-                WHERE parent_path = ? ORDER BY name
-            """, (path,)).fetchall()
-            return jsonify([dict(s) for s in songs])
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 @app.route('/stream/<path:fp>')
 def stream(fp): return send_from_directory(MUSIC_BASE, urllib.parse.unquote(fp))

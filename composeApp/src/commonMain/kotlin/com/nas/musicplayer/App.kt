@@ -108,11 +108,17 @@ fun App(
                             onNavigateToAlbum = { album -> navController.navigate("album_detail/${album.name}/${album.artist}") },
                             onNavigateToAddToPlaylist = { song -> navController.navigate("add_to_playlist/${song.id}") },
                             onNavigateToTheme = { theme -> 
-                                searchViewModel.loadThemeDetails(theme)
-                                navController.navigate("theme_detail/${theme.name}")
+                                if (theme.path.contains("차트") || theme.path.contains("모음")) {
+                                    val encodedPath = theme.path.replace("/", "%2F")
+                                    navController.navigate("folder_browse/$encodedPath/${theme.name}")
+                                } else {
+                                    searchViewModel.loadThemeDetails(theme)
+                                    navController.navigate("theme_detail/${theme.name}")
+                                }
                             },
                             onNavigateToArtistGrid = { folderName -> 
-                                navController.navigate("folder_browse/$folderName/$folderName") 
+                                val encodedPath = folderName.replace("/", "%2F")
+                                navController.navigate("folder_browse/$encodedPath/$folderName") 
                             },
                             onVoiceSearchClick = onVoiceSearchClick,
                             onDownloadSong = onDownloadSong,
@@ -135,7 +141,7 @@ fun App(
                             navArgument("title") { type = NavType.StringType }
                         )
                     ) { backStackEntry ->
-                        val path = backStackEntry.arguments?.getString("path") ?: ""
+                        val path = backStackEntry.arguments?.getString("path")?.replace("%2F", "/") ?: ""
                         val title = backStackEntry.arguments?.getString("title") ?: ""
                         FolderBrowseScreen(
                             apiService = searchViewModel.getApiService(),
