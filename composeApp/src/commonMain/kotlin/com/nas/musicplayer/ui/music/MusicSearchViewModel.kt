@@ -15,9 +15,8 @@ import io.ktor.client.request.*
 import io.ktor.http.takeFrom
 import io.ktor.http.appendPathSegments
 import io.ktor.http.encodeURLPath
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -54,7 +53,7 @@ data class MusicSearchUiState(
     val artistThemes: List<Theme> = emptyList(),
     val genreThemes: List<Theme> = emptyList(),
     val isLoading: Boolean = false,
-    val isTop100Loading: Boolean = false, // 멜론 차트 전용 로딩 상태 추가
+    val isMainDataLoaded: Boolean = false,
     val searchQuery: String = "",
     val selectedArtist: com.nas.musicplayer.Artist? = null,
     val isArtistLoading: Boolean = false,
@@ -81,9 +80,7 @@ class MusicSearchViewModel(val repository: MusicRepository) : ViewModel() {
     private var isPagingLoading = false
 
     init {
-        // 데이터 로드 순서 명확히 정의
-        loadThemes()
-        loadTop100()
+        loadMainData()
         
         viewModelScope.launch {
             repository.recentSearches.collect { searches ->
@@ -99,6 +96,33 @@ class MusicSearchViewModel(val repository: MusicRepository) : ViewModel() {
     }
 
     fun getApiService(): MusicApiService = musicApiService
+
+    // 모든 메인 화면 데이터를 병렬로 로드
+    fun loadMainData() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true) }
+            try {
+                // 병렬로 호출하여 동시에 데이터 가져오기
+                val themeDeferred = async { httpClient.get("$pythonBaseUrl/api/themes").body<ThemeResponse>() }
+                val top100Deferred = async { musicApiService.getTop100() }
+                
+                val themeRes = themeDeferred.await()
+                val top100Res = top100Deferred.await()
+                
+                _uiState.update { it.copy(
+                    themes = themeRes.charts,
+                    collectionThemes = themeRes.collections,
+                    artistThemes = themeRes.artists,
+                    genreThemes = themeRes.genres,
+                    top100Songs = top100Res.map { cleanSongInfo(it) },
+                    isMainDataLoaded = true,
+                    isLoading = false
+                ) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoading = false, isMainDataLoaded = true) }
+            }
+        }
+    }
 
     fun loadArtistsPaged(folderType: String, isRefresh: Boolean = false) {
         if (isPagingLoading) return
@@ -145,34 +169,6 @@ class MusicSearchViewModel(val repository: MusicRepository) : ViewModel() {
                 )
                 _uiState.update { it.copy(selectedAlbum = albumInfo, isAlbumLoading = false) }
             } catch (e: Exception) { _uiState.update { it.copy(isAlbumLoading = false) } }
-        }
-    }
-
-    fun loadTop100() {
-        if (_uiState.value.isTop100Loading) return
-
-        viewModelScope.launch {
-            _uiState.update { it.copy(isTop100Loading = true) }
-            try {
-                // 직접 httpClient 대신 정의된 musicApiService를 사용하도록 변경
-                val response = musicApiService.getTop100()
-                if (response.isNotEmpty()) {
-                    val songs = response.map { cleanSongInfo(it) }
-                    _uiState.update { it.copy(top100Songs = songs, isTop100Loading = false) }
-                    println("Top100 loaded successfully: ${songs.size} songs")
-                } else {
-                    // 데이터가 비어있을 경우 재시도 로직을 넣거나 상태 유지
-                    _uiState.update { it.copy(isTop100Loading = false) }
-                    println("Top100 returned empty list from server")
-                }
-            } catch (e: Exception) {
-                println("Top100 loading failed: ${e.message}")
-                _uiState.update { it.copy(isTop100Loading = false) }
-
-                // 3초 뒤에 한 번 더 자동으로 재시도 (선택 사항)
-                delay(3000)
-                loadTop100()
-            }
         }
     }
 
@@ -237,21 +233,10 @@ class MusicSearchViewModel(val repository: MusicRepository) : ViewModel() {
     private fun generateMatchKey(artist: String, title: String): String = "${artist.replace(Regex("[^a-zA-Z0-9가-힣]"), "").lowercase()}-${title.replace(Regex("[^a-zA-Z0-9가-힣]"), "").lowercase()}"
     fun startDownloading(id: Long) { _uiState.update { it.copy(downloadingSongIds = it.downloadingSongIds + id) } }
     fun stopDownloading(id: Long) { _uiState.update { it.copy(downloadingSongIds = it.downloadingSongIds - id) } }
-    fun loadThemes() { 
-        viewModelScope.launch { 
-            try { 
-                val res = httpClient.get("$pythonBaseUrl/api/themes").body<ThemeResponse>()
-                _uiState.update { it.copy(
-                    themes = res.charts, 
-                    collectionThemes = res.collections, 
-                    artistThemes = res.artists, 
-                    genreThemes = res.genres
-                ) } 
-            } catch(e: Exception){} 
-        } 
-    }
+    
     fun deleteRecentSearch(q: String) { viewModelScope.launch { repository.deleteRecentSearch(q) } }
     fun clearAllRecentSearches() { viewModelScope.launch { repository.clearAllRecentSearches() } }
+
     fun loadThemeDetails(t: Theme) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, searchResults = emptyList()) }
