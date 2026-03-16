@@ -124,7 +124,11 @@ fun MusicSearchScreen(
         }
 
         Box(modifier = Modifier.weight(1f)) {
-            if (isSearchFocused || uiState.searchQuery.isNotEmpty()) {
+            if (uiState.isLoading) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            } else if (isSearchFocused || uiState.searchQuery.isNotEmpty()) {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
                     if (uiState.searchArtists.isNotEmpty()) {
                         item { SearchSectionTitle("아티스트") }
@@ -179,7 +183,7 @@ fun MusicSearchScreen(
                                 isDownloaded = viewModel.isSongDownloaded(song)
                             )
                         }
-                    } else if (!uiState.isLoading) {
+                    } else {
                         item {
                             Box(modifier = Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
                                 Text(if(uiState.searchQuery.isEmpty()) "검색어를 입력해 주세요." else "검색 결과가 없습니다.", color = Color.Gray)
@@ -188,56 +192,44 @@ fun MusicSearchScreen(
                     }
                 }
             } else {
-                if (!uiState.isMainDataLoaded) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
+                LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+                    if (uiState.themes.isNotEmpty()) {
+                        item { ThemeSection(title = "추천 차트", themes = uiState.themes, onNavigateToTheme = onNavigateToTheme) }
                     }
-                } else {
-                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
-                        if (uiState.themes.isNotEmpty()) {
-                            item { ThemeSection(title = "추천 차트", themes = uiState.themes, onNavigateToTheme = onNavigateToTheme) }
-                        }
-                        if (uiState.collectionThemes.isNotEmpty()) {
-                            item { ThemeSection(title = "추천 모음", themes = uiState.collectionThemes, onNavigateToTheme = onNavigateToTheme) }
-                        }
-                        if (uiState.artistThemes.isNotEmpty()) {
-                            item { ThemeSection(title = "가수별 추천", themes = uiState.artistThemes, onNavigateToTheme = onNavigateToTheme) }
-                        }
-                        if (uiState.genreThemes.isNotEmpty()) {
-                            item { 
-                                GenreGridSection(
-                                    genres = uiState.genreThemes, 
-                                    onGenreClick = { theme -> onNavigateToArtistGrid(theme.name) }
-                                ) 
-                            }
-                        }
-                        
-                        if (uiState.top100Songs.isNotEmpty()) {
-                            item {
-                                Text(
-                                    text = "멜론 주간 TOP 100",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(start = 16.dp, top = 24.dp, bottom = 12.dp)
-                                )
-                            }
-                            items(uiState.top100Songs, key = { it.id.toString() + it.name + it.artist }) { song ->
-                                SongListItem(
-                                    song = song,
-                                    onItemClick = { onSongClick(song, uiState.top100Songs) },
-                                    onMoreClick = { selectedSongForSheet = song; scope.launch { sheetState.show() } },
-                                    isDownloading = downloadingSongIds.contains(song.id),
-                                    isDownloaded = viewModel.isSongDownloaded(song)
-                                )
-                            }
+                    if (uiState.collectionThemes.isNotEmpty()) {
+                        item { ThemeSection(title = "추천 모음", themes = uiState.collectionThemes, onNavigateToTheme = onNavigateToTheme) }
+                    }
+                    if (uiState.artistThemes.isNotEmpty()) {
+                        item { ThemeSection(title = "가수별 추천", themes = uiState.artistThemes, onNavigateToTheme = onNavigateToTheme) }
+                    }
+                    if (uiState.genreThemes.isNotEmpty()) {
+                        item { 
+                            GenreGridSection(
+                                genres = uiState.genreThemes, 
+                                onGenreClick = { theme -> onNavigateToArtistGrid(theme.name) }
+                            ) 
                         }
                     }
-                }
-            }
-            
-            if (uiState.isLoading && uiState.searchQuery.isEmpty()) {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background.copy(alpha = 0.9f)) { 
-                    MusicLoadingScreen() 
+                    
+                    if (uiState.top100Songs.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = "멜론 주간 TOP 100",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(start = 16.dp, top = 24.dp, bottom = 12.dp)
+                            )
+                        }
+                        items(uiState.top100Songs, key = { it.id.toString() + it.name + it.artist }) { song ->
+                            SongListItem(
+                                song = song,
+                                onItemClick = { onSongClick(song, uiState.top100Songs) },
+                                onMoreClick = { selectedSongForSheet = song; scope.launch { sheetState.show() } },
+                                isDownloading = downloadingSongIds.contains(song.id),
+                                isDownloaded = viewModel.isSongDownloaded(song)
+                            )
+                        }
+                    }
                 }
             }
         }

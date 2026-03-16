@@ -53,7 +53,6 @@ data class MusicSearchUiState(
     val artistThemes: List<Theme> = emptyList(),
     val genreThemes: List<Theme> = emptyList(),
     val isLoading: Boolean = false,
-    val isMainDataLoaded: Boolean = false,
     val searchQuery: String = "",
     val selectedArtist: com.nas.musicplayer.Artist? = null,
     val isArtistLoading: Boolean = false,
@@ -97,12 +96,11 @@ class MusicSearchViewModel(val repository: MusicRepository) : ViewModel() {
 
     fun getApiService(): MusicApiService = musicApiService
 
-    // 모든 메인 화면 데이터를 병렬로 로드
     fun loadMainData() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             try {
-                // 병렬로 호출하여 동시에 데이터 가져오기
+                // 병렬 실행으로 응답 속도 최적화
                 val themeDeferred = async { httpClient.get("$pythonBaseUrl/api/themes").body<ThemeResponse>() }
                 val top100Deferred = async { musicApiService.getTop100() }
                 
@@ -115,11 +113,10 @@ class MusicSearchViewModel(val repository: MusicRepository) : ViewModel() {
                     artistThemes = themeRes.artists,
                     genreThemes = themeRes.genres,
                     top100Songs = top100Res.map { cleanSongInfo(it) },
-                    isMainDataLoaded = true,
                     isLoading = false
                 ) }
             } catch (e: Exception) {
-                _uiState.update { it.copy(isLoading = false, isMainDataLoaded = true) }
+                _uiState.update { it.copy(isLoading = false) }
             }
         }
     }
