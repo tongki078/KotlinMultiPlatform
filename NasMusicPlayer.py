@@ -240,6 +240,10 @@ MONITOR_HTML = '''
                         <option value="DSD">🎻 DSD</option>
                         <option value="OST">🎬 OST</option>
                     </select>
+                    <label style="display: flex; align-items: center; gap: 6px; color: #94a3b8; font-size: 0.85rem; cursor: pointer; white-space: nowrap; padding: 0 10px;">
+                        <input type="checkbox" id="exp-fail-only" onchange="loadExplorer(1)" style="width: 16px; height: 16px;">
+                        ❌ 실패 항목만
+                    </label>
                     <input type="text" id="exp-search" placeholder="가수, 제목, 앨범명 검색..." style="flex: 1;" onkeyup="if(event.key==='Enter') loadExplorer(1)">
                     <button onclick="loadExplorer(1)">검색/새로고침</button>
                 </div>
@@ -310,12 +314,15 @@ MONITOR_HTML = '''
             expPage = page;
             const cat = document.getElementById('exp-cat').value;
             const q = document.getElementById('exp-search').value;
+
+            // [추가] 체크박스 상태 확인
+            const failOnly = document.getElementById('exp-fail-only').checked;
             const tbody = document.getElementById('exp-body');
 
             if(!tbody) return; // 요소가 없으면 중단
 
             try {
-                const res = await fetch(`/api/admin/data?category=${cat}&q=${encodeURIComponent(q)}&page=${page}`);
+                const res = await fetch(`/api/admin/data?category=${cat}&q=${encodeURIComponent(q)}&page=${page}&fail_only=${failOnly}`);
                 const data = await res.json();
 
                 // [중요] 데이터가 배열인지 확인 (객체면 에러 문구 출력)
@@ -1250,7 +1257,6 @@ def browse_library():
         return jsonify({"error": "Path is required"}), 400
 
     try:
-        # 모든 DB 연결에 timeout=20 추가 권장
         with sqlite3.connect(DB_PATH, timeout=20) as conn:
             conn.row_factory = sqlite3.Row
             search_path = path if path.endswith('/') else path + '/'
@@ -1263,9 +1269,11 @@ def browse_library():
 
             sub_folders = set()
             for r in rows:
-                rel = r['parent_path'][len(search_path):]
-                segment = rel.split('/')[0]
-                if segment: sub_folders.add(segment)
+                p_path = r['parent_path']
+                if len(p_path) > len(search_path):
+                    rel = p_path[len(search_path):]
+                    segment = rel.split('/')[0]
+                    if segment: sub_folders.add(segment)
 
             if sub_folders:
                 result = []
@@ -1279,30 +1287,24 @@ def browse_library():
                     """, (f"{full_p}%",)).fetchone()
 
                     result.append({
-                        "name": name,
-                        "path": full_p,
-                        "is_dir": True,  # JSON Boolean (true)
+                        "name": name, "path": full_p, "is_dir": True,
                         "cover": img[0] if img else None
                     })
                 return jsonify(result)
 
-            # 2. 하위 폴더 없으면 노래 목록 반환
+            # 2. 노래 목록 반환 (id 대신 rowid 사용으로 에러 방지)
             songs = conn.execute("""
-                SELECT id, name, artist, albumName, stream_url, parent_path, meta_poster
+                SELECT rowid AS id, name, artist, albumName, stream_url, parent_path, meta_poster
                 FROM global_songs WHERE parent_path = ? ORDER BY name
             """, (path,)).fetchall()
 
-            # [핵심] Kotlin Boolean 호환 및 필드명 통일
-            song_result = []
-            for s in songs:
-                d = dict(s)
-                d['is_dir'] = False  # JSON Boolean (false)
-                d['path'] = d['parent_path']  # BrowseItem.path와 매칭
-                song_result.append(d)
-            return jsonify(song_result)
+            return jsonify([{**dict(s), "is_dir": False, "path": s['parent_path']} for s in songs])
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
 
 @app.route('/api/admin/data', methods=['GET'])
 def get_admin_data():
@@ -1310,6 +1312,10 @@ def get_admin_data():
     cat = request.args.get('category', 'All')
     q = request.args.get('q', '').strip()
     page = int(request.args.get('page', 1))
+
+    # [추가] 실패 필터 파라미터 받기
+    show_fail = request.args.get('fail_only', 'false') == 'true'
+
     limit = 50
     offset = (page - 1) * limit
 
@@ -1328,6 +1334,10 @@ def get_admin_data():
     if q:
         query += " AND (name LIKE ? OR artist LIKE ? OR albumName LIKE ?)"
         params.extend([f"%{q}%", f"%{q}%", f"%{q}%"])
+
+    # [추가] 실패 항목만 보기 필터 로직
+    if show_fail:
+        query += " AND (meta_poster = 'FAIL' OR meta_poster IS NULL OR meta_poster = '')"
 
     query += f" ORDER BY id DESC LIMIT {limit} OFFSET {offset}"
 
