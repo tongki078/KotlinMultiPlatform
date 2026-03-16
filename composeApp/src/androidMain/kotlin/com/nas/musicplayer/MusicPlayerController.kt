@@ -112,8 +112,14 @@ actual class MusicPlayerController(private val context: Context) {
 
     actual fun playSong(song: Song, playlist: List<Song>) {
         if (playlist.isEmpty()) return
-        val indexInList = playlist.indexOfFirst { it.id == song.id }
+        
+        Log.d("MusicPlayerController", "Requested Song streamUrl: ${song.streamUrl}, Playlist Size: ${playlist.size}")
+        
+        // ID 대신 고유값인 streamUrl로 인덱스를 찾도록 변경
+        val indexInList = playlist.indexOfFirst { it.streamUrl == song.streamUrl }
         val startIndex = if (indexInList != -1) indexInList else 0
+        Log.d("MusicPlayerController", "Starting at index: $startIndex")
+        
         _currentPlaylist.value = playlist
         _currentIndex.value = startIndex
         _currentSong.value = song
@@ -122,16 +128,17 @@ actual class MusicPlayerController(private val context: Context) {
             p.stop()
             p.clearMediaItems()
             
-            playlist.forEach { s ->
+            val mediaItems = playlist.map { s ->
                 val uriString = s.streamUrl ?: ""
                 val uri = if (uriString.startsWith("/") || uriString.startsWith("content://")) {
                     Uri.fromFile(File(uriString))
                 } else {
                     Uri.parse(uriString)
                 }
-                p.addMediaItem(MediaItem.fromUri(uri))
+                MediaItem.fromUri(uri)
             }
-
+            
+            p.setMediaItems(mediaItems)
             p.prepare()
             p.seekTo(startIndex, 0L)
             p.play()

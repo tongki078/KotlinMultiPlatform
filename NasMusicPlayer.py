@@ -36,6 +36,11 @@ META_STRATEGIES = {
     "OST":    {"priority": ["itunes", "deezer"], "clean": "western"}
 }
 
+# 1. 상단 전역 변수 영역에 추가
+cached_meta_stats = {"timestamp": 0, "data": None}
+# 통계 데이터 캐시 변수 추가
+cached_db_stats = {"data": None, "time": 0}
+
 BASE_URL = "http://192.168.0.2:4444"
 
 # [중요] DB 위치를 시스템 파티션(/root)에서 쓰기 가능한 데이터 볼륨(/volume2)으로 변경
@@ -602,37 +607,36 @@ def init_db():
     print("[*] 🛠️ DB 엔진 최적화 및 인덱스 점검 중...")
     with sqlite3.connect(DB_PATH, timeout=600) as conn:
         conn.execute('PRAGMA journal_mode=WAL')
-        conn.execute('PRAGMA cache_size = -2000000')  # 2GB 메모리 캐시 설정
+        conn.execute('PRAGMA cache_size = -2000000')  # 2GB 캐시
+        conn.execute('PRAGMA synchronous = NORMAL')   # 쓰기 성능 향상
+        conn.execute('PRAGMA mmap_size = 30000000000') # 30GB 메모리 맵핑 (검색 속도 폭발)
+        conn.execute('PRAGMA temp_store = MEMORY')
 
         # 1. 기본 테이블 생성
         conn.execute('''
             CREATE TABLE IF NOT EXISTS global_songs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT, artist TEXT, albumName TEXT,
                 stream_url TEXT, parent_path TEXT, meta_poster TEXT,
                 genre TEXT, release_date TEXT, album_artist TEXT
             )
         ''')
 
-        # 2. 아티스트 캐시 테이블 (애플뮤직 스타일 탐색용)
+        # 2. 사라진 테마 테이블 강제 생성
         conn.execute('''
-            CREATE TABLE IF NOT EXISTS artists_cache (
-                artist_name TEXT,
-                cover TEXT,
-                folder_type TEXT,
-                PRIMARY KEY (artist_name, folder_type)
+            CREATE TABLE IF NOT EXISTS themes (
+                type TEXT, name TEXT, path TEXT, image_url TEXT,
+                PRIMARY KEY (type, name, path)
             )
         ''')
 
-        # 3. 검색 최적화를 위한 인덱스 생성
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_search_name ON global_songs(name)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_search_artist ON global_songs(artist)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_search_album ON global_songs(albumName)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_path ON global_songs(parent_path)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_artist_cache_folder ON artists_cache(folder_type)')
+        # 3. 아티스트 캐시 테이블
+        conn.execute('CREATE TABLE IF NOT EXISTS artists_cache (artist_name TEXT, cover TEXT, folder_type TEXT, PRIMARY KEY (artist_name, folder_type))')
 
+        # 4. 필수 인덱스 (조회 속도용)
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_path ON global_songs(parent_path)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_meta_lookup ON global_songs(artist, albumName)')
         conn.commit()
-    print("[*] ✅ DB 인덱싱 및 캐시 구조 점검 완료.")
+    print("[*] ✅ DB 최적화 및 구조 복구 완료.")
 
 def refresh_artist_cache():
     print("[*] 🔄 아티스트 목록 캐시 갱신 중... (대용량 데이터 최적화)")
@@ -1249,61 +1253,51 @@ def start_metadata_update_thread(query_tag=None):
     finally:
         up_st["is_running"] = False
 
-# [추가] 폴더 계층 구조 탐색 API (그리드 탐색용)
 @app.route('/api/library/browse')
 def browse_library():
     path = request.args.get('path', '').strip()
-    if not path:
-        return jsonify({"error": "Path is required"}), 400
+    if not path: return jsonify({"error": "Path is required"}), 400
 
     try:
         with sqlite3.connect(DB_PATH, timeout=20) as conn:
             conn.row_factory = sqlite3.Row
             search_path = path if path.endswith('/') else path + '/'
 
-            # 1. 하위 폴더 찾기
+            # 🚀 한 번의 쿼리로 하위 폴더들과 각각의 대표 이미지를 즉시 가져옴
             rows = conn.execute("""
-                SELECT DISTINCT parent_path FROM global_songs
-                WHERE parent_path LIKE ? AND parent_path != ?
-            """, (f"{search_path}%", path)).fetchall()
+                SELECT parent_path, MAX(meta_poster) as poster
+                FROM global_songs
+                WHERE parent_path LIKE ?
+                GROUP BY parent_path
+            """, (f"{search_path}%",)).fetchall()
 
-            sub_folders = set()
+            sub_folders = {}
             for r in rows:
                 p_path = r['parent_path']
-                if len(p_path) > len(search_path):
-                    rel = p_path[len(search_path):]
-                    segment = rel.split('/')[0]
-                    if segment: sub_folders.add(segment)
+                if p_path == path: continue
+                rel = p_path[len(search_path):]
+                segment = rel.split('/')[0]
+                if segment:
+                    # 이미지가 있는 폴더를 우선적으로 캐싱
+                    if segment not in sub_folders or (not sub_folders[segment] and r['poster']):
+                        sub_folders[segment] = r['poster']
 
             if sub_folders:
-                result = []
-                for name in sorted(list(sub_folders)):
-                    full_p = f"{search_path}{name}"
-                    img = conn.execute("""
-                        SELECT meta_poster FROM global_songs
-                        WHERE parent_path LIKE ? AND meta_poster IS NOT NULL
-                        AND meta_poster != 'FAIL' AND meta_poster != ''
-                        ORDER BY meta_poster DESC LIMIT 1
-                    """, (f"{full_p}%",)).fetchone()
-
-                    result.append({
-                        "name": name, "path": full_p, "is_dir": True,
-                        "cover": img[0] if img else None
-                    })
+                result = [{
+                    "name": name, "path": f"{search_path}{name}", "is_dir": True,
+                    "cover": p if p and p not in ('', 'FAIL') else None
+                } for name, p in sorted(sub_folders.items())]
                 return jsonify(result)
 
-            # 2. 노래 목록 반환 (id 대신 rowid 사용으로 에러 방지)
+            # 🎵 노래 목록 반환 시 rowid AS id 를 추가하여 곡 전환 문제 해결
             songs = conn.execute("""
                 SELECT rowid AS id, name, artist, albumName, stream_url, parent_path, meta_poster
                 FROM global_songs WHERE parent_path = ? ORDER BY name
             """, (path,)).fetchall()
-
             return jsonify([{**dict(s), "is_dir": False, "path": s['parent_path']} for s in songs])
-
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
 
 
 @app.route('/api/admin/data', methods=['GET'])
@@ -1462,8 +1456,11 @@ def get_details(tp):
     p = urllib.parse.unquote(tp)
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
+        # rowid AS id 추가 및 인덱스 활용을 위해 쿼리 최적화
         rows = conn.execute(
-            "SELECT name, artist, albumName, stream_url, parent_path, meta_poster FROM global_songs WHERE parent_path LIKE ? ORDER BY artist, name ASC LIMIT 500",
+            """SELECT rowid AS id, name, artist, albumName, stream_url, parent_path, meta_poster
+               FROM global_songs WHERE parent_path LIKE ?
+               ORDER BY artist, name ASC LIMIT 500""",
             (f"{p}%",)
         ).fetchall()
         return jsonify([dict(r) for r in rows])
@@ -1494,7 +1491,7 @@ def get_top100():
 
             # 3. 추출된 최신 경로에 속한 곡들만 모두 가져옴
             rows = conn.execute(
-                """SELECT name, artist, albumName, stream_url, parent_path, meta_poster,
+                """SELECT rowid AS id, name, artist, albumName, stream_url, parent_path, meta_poster,
                           genre, release_date, album_artist, 0 as is_dir
                    FROM global_songs
                    WHERE parent_path = ?""",
@@ -1537,7 +1534,7 @@ def search_songs():
             conn.row_factory = sqlite3.Row
             # 0 as is_dir을 추가하여 앱에서 '노래'로 정상 인식하게 함
             rows = conn.execute(
-                """SELECT name, artist, albumName, stream_url, parent_path, meta_poster,
+                """SELECT rowid AS id, name, artist, albumName, stream_url, parent_path, meta_poster,
                           genre, release_date, album_artist, 0 as is_dir
                    FROM global_songs
                    WHERE name LIKE ? OR artist LIKE ? OR albumName LIKE ?
@@ -1603,36 +1600,34 @@ def reset_fail():
 
 @app.route('/api/metadata/status')
 def get_meta():
-    res = up_st.copy()  # 세션 정보 (current, success, fail)
+    global cached_db_stats
+    now = time.time()
+
+    # 30초 이내의 데이터는 캐시에서 즉시 반환
+    if cached_db_stats["data"] and (now - cached_db_stats["time"] < 30):
+        res = up_st.copy()
+        res.update(cached_db_stats["data"])
+        return jsonify(res)
+
+    res = up_st.copy()
     try:
         with sqlite3.connect(DB_PATH, timeout=5) as conn:
-            # 전체 DB 현황 집계 (그룹화 기준)
+            # 47만 건의 통계는 매우 무거운 작업입니다.
             stats = conn.execute("""
-                SELECT
-                    COUNT(*),
-                    COUNT(CASE WHEN status = 'success' THEN 1 END),
-                    COUNT(CASE WHEN status = 'fail' THEN 1 END),
-                    COUNT(CASE WHEN status = 'pending' THEN 1 END)
+                SELECT COUNT(*), COUNT(CASE WHEN status='success' THEN 1 END),
+                       COUNT(CASE WHEN status='fail' THEN 1 END), COUNT(CASE WHEN status='pending' THEN 1 END)
                 FROM (
-                    SELECT
-                        CASE
-                            WHEN MAX(meta_poster) IS NOT NULL AND MAX(meta_poster) NOT IN ('', 'FAIL') THEN 'success'
-                            WHEN MAX(meta_poster) = 'FAIL' THEN 'fail'
-                            ELSE 'pending'
-                        END as status
-                    FROM global_songs
-                    GROUP BY artist, albumName
+                    SELECT CASE WHEN MAX(meta_poster) IS NOT NULL AND MAX(meta_poster) NOT IN ('', 'FAIL') THEN 'success'
+                                WHEN MAX(meta_poster) = 'FAIL' THEN 'fail' ELSE 'pending' END as status
+                    FROM global_songs GROUP BY artist, albumName
                 )
             """).fetchone()
             if stats:
-                res.update({
-                    "db_total": stats[0] or 0,
-                    "db_success": stats[1] or 0,
-                    "db_fail": stats[2] or 0,
-                    "db_pending": stats[3] or 0
-                })
-    except Exception as e:
-        print(f"Meta Status Error: {e}")
+                stat_data = {"db_total": stats[0], "db_success": stats[1], "db_fail": stats[2], "db_pending": stats[3]}
+                cached_db_stats = {"data": stat_data, "time": now}
+                res.update(stat_data)
+    except:
+        pass
     return jsonify(res)
 
 # ==========================================
@@ -1672,7 +1667,9 @@ def search_integrated():
 
             # 3. 노래 검색 (최대 50곡 - 세로 리스트용)
             songs = conn.execute(
-                "SELECT * FROM global_songs WHERE name LIKE ? OR artist LIKE ? LIMIT 50",
+                """SELECT rowid AS id, name, artist, albumName, stream_url, parent_path, meta_poster,
+                          genre, release_date, album_artist, 0 as is_dir
+                   FROM global_songs WHERE name LIKE ? OR artist LIKE ? LIMIT 50""",
                 (search_val, search_val)
             ).fetchall()
 
@@ -1736,7 +1733,7 @@ def get_songs_by_album(artist_name, album_name):
         alb = urllib.parse.unquote(album_name).strip()
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
-            # 먼저 해당 가수의 해당 앨범이 있는 대표 폴더를 찾음
+            # 1. 먼저 해당 가수의 해당 앨범이 있는 대표 폴더를 찾음
             path_row = conn.execute(
                 """SELECT parent_path FROM global_songs
                    WHERE UPPER(TRIM(artist)) = UPPER(TRIM(?))
@@ -1745,14 +1742,17 @@ def get_songs_by_album(artist_name, album_name):
             ).fetchone()
 
             if path_row:
-                # 해당 폴더 내의 모든 곡 반환
+                # 🚀 [수정] rowid AS id 를 추가하여 앱이 클릭한 곡을 정확히 찾게 함
                 rows = conn.execute(
-                    "SELECT * FROM global_songs WHERE parent_path = ? ORDER BY name",
+                    """SELECT rowid AS id, name, artist, albumName, stream_url, parent_path, meta_poster,
+                              genre, release_date, album_artist, 0 as is_dir
+                       FROM global_songs WHERE parent_path = ? ORDER BY name""",
                     (path_row['parent_path'],)
                 ).fetchall()
                 return jsonify([dict(r) for r in rows])
             return jsonify([])
     except Exception as e:
+        print(f"Error in get_songs_by_album: {e}")
         return jsonify([])
 
 # 4. 아티스트 페이징 목록 (무한스크롤 지원)
