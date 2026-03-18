@@ -1469,16 +1469,43 @@ def start_meta():
         return jsonify({"status": "error", "message": f"이미 엔진이 작동 중입니다. (현재 대상: {up_st['target']})"})
 
 
-@app.route('/api/themes')
-def get_themes():
-    # 전체를 보내지 말고 핵심 정보(이미지 URL 등)만 요약해서 보냄
+# @app.route('/api/themes')
+# def get_themes():
+#     # [수정] 전체를 보내지 말고, 각각 10개씩만 잘라서 테스트해보세요.
+#     # 이렇게 해서 앱이 안 죽으면, 데이터 양이 문제인 게 확실합니다.
+#     return jsonify({
+#         "charts": cache["charts"][:10],
+#         "collections": cache["collections"][:10],
+#         "artists": cache["artists"][:10],
+#         "genres": cache["genres"][:10]
+#     })
+
+# [교체할 API] 전체 데이터 덤프 대신 목록만 우선 제공
+@app.route('/api/themes/list')
+def get_themes_list():
+    """앱 초기 화면용: 메타데이터 없는 단순 경로 목록만 반환"""
     return jsonify({
         "charts": [{"name": c["name"], "path": c["path"], "image_url": c["image_url"]} for c in cache["charts"]],
         "collections": [{"name": c["name"], "path": c["path"], "image_url": c["image_url"]} for c in cache["collections"]],
         "artists": [{"name": c["name"], "path": c["path"], "image_url": c["image_url"]} for c in cache["artists"]],
-        "genres": [{"name": c["name"], "path": c["path"], "image_url": c["image_url"]} for c in cache["genres"]]
+        "genres": [{"name": g["name"], "path": g["path"], "image_url": g["image_url"]} for g in cache["genres"]]
     })
 
+@app.route('/api/themes/<category>')
+def get_themes_by_category(category):
+    """
+    카테고리별로 페이징된 테마 목록을 반환
+    예: /api/themes/charts?page=1
+    """
+    page = int(request.args.get('page', 1))
+    limit = 50
+    offset = (page - 1) * limit
+
+    # 캐시에서 해당 카테고리 데이터 가져오기
+    data = cache.get(category, [])
+    paginated_data = data[offset: offset + limit]
+
+    return jsonify(paginated_data)
 
 @app.route('/api/theme-details/<path:tp>')
 def get_details(tp):
@@ -1501,60 +1528,36 @@ def get_details(tp):
 
 @app.route('/api/top100')
 def get_top100():
-    """DB 인덱싱 정보를 활용하여 가장 최신 주간의 TOP 100 리스트를 순서대로 반환"""
     try:
-        # 1. 멜론 주간 차트 기준 상대 경로 계산
         base_rel_path = os.path.relpath(WEEKLY_CHART_PATH, MUSIC_BASE).replace('\\', '/')
 
         with sqlite3.connect(DB_PATH, timeout=20) as conn:
             conn.row_factory = sqlite3.Row
 
-            # 2. DB에서 해당 경로 하위의 가장 최신 'parent_path' 하나를 추출
-            # 문자열 내림차순 정렬(DESC)을 통해 날짜가 가장 늦은 폴더가 선택됩니다.
+            # 1. 최신 주차 폴더명 하나만 찾기 (가장 정확한 쿼리)
             latest_folder_row = conn.execute(
-                "SELECT parent_path FROM global_songs WHERE parent_path LIKE ? ORDER BY parent_path DESC LIMIT 1",
-                (f"{base_rel_path}/%",)
+                "SELECT parent_path FROM global_songs WHERE parent_path LIKE ? GROUP BY parent_path ORDER BY MAX(rowid) DESC LIMIT 1",
+                (f"%{base_rel_path}%",)
             ).fetchone()
 
-            if not latest_folder_row:
-                print(f"[*] Top100: DB에서 {base_rel_path} 하위 데이터를 찾을 수 없습니다. (스캔 필요)")
-                return jsonify([])
-
+            if not latest_folder_row: return jsonify([])
             latest_path = latest_folder_row['parent_path']
 
-            # 3. 추출된 최신 경로에 속한 곡들만 모두 가져옴
+            # 2. [핵심] 100곡만 확실하게 제한하여 가져오기
             rows = conn.execute(
-                """SELECT rowid AS id, name, artist, albumName, meta_poster, genre, album_artist
+                """SELECT rowid AS id, name, artist, albumName, stream_url, parent_path, meta_poster
                    FROM global_songs
-                   WHERE parent_path = ?""",
+                   WHERE parent_path = ?
+                   ORDER BY name ASC LIMIT 100""",
                 (latest_path,)
             ).fetchall()
 
             result = [dict(r) for r in rows]
-
-            # 4. [핵심] 순위 정렬 로직: 파일명이나 아티스트명 앞의 숫자를 추출하여 정렬
-            def get_rank(item):
-                # 파일명(stream_url)에서 숫자 추출 시도 (예: 001.곡명.flac)
-                url_path = urllib.parse.unquote(item.get('stream_url', ''))
-                filename = os.path.basename(url_path)
-                match = re.match(r'^(\d+)', filename)
-                if match: return int(match.group(1))
-
-                # 아티스트명 앞의 숫자 시도 (예: "001 가수")
-                match = re.match(r'^(\d+)', item.get('artist', ''))
-                if match: return int(match.group(1))
-
-                return 999  # 숫자가 없으면 맨 뒤로
-
-            result.sort(key=get_rank)
-
-            print(f"[*] DB 조회 성공: {latest_path} ({len(result)}곡 발견, 순위 정렬 완료)")
+            # 3. 파일명 숫자 정렬은 서버에서 하지 말고 앱으로 넘기는 것이 서버 부하 방지에 좋습니다.
             return jsonify(result)
-
     except Exception as e:
-        print(f"[!] Top100 DB 조회 중 치명적 오류: {e}")
+        print(f"[!] Top100 오류: {e}")
         return jsonify([])
-
 
 @app.route('/api/search')
 def search_songs():
