@@ -30,8 +30,8 @@ GENRE_ROOTS = {
 META_STRATEGIES = {
     "국내":   {"priority": ["maniadb", "deezer"], "clean": "korean"},
     "외국":   {"priority": ["itunes", "deezer"], "clean": "western"},
-    "일본":   {"priority": ["itunes", "deezer"], "clean": "western"},
-    "클래식": {"priority": ["deezer", "itunes"], "clean": "classical"},
+    "일본":   {"priority": ["itunes", "deezer"], "clean": "japanese"},
+    "클래식": {"priority": ["itunes", "deezer"], "clean": "classical"},
     "DSD":    {"priority": ["itunes", "deezer"], "clean": "western"},
     "OST":    {"priority": ["itunes", "deezer"], "clean": "western"}
 }
@@ -575,7 +575,7 @@ MONITOR_HTML = '''
                     });
             }
         }
-        setInterval(updateStatus, 2000);
+        setInterval(updateStatus, 10000);
         updateStatus(); // 즉시 실행
         addLog("NasMusic Pro 관리 콘솔에 연결되었습니다.");
     </script>
@@ -690,56 +690,67 @@ def load_cache():
     except Exception as e:
         print(f"[!] 캐시 로딩 중 치명적 오류: {e}")
 
-
 def get_info(f, d):
     nm = os.path.splitext(f)[0]
     rel_dir = os.path.relpath(d, MUSIC_BASE)
     path_parts = rel_dir.split(os.sep)
     top_folder = path_parts[0]
 
-    art, tit = ("Unknown Artist", nm)
+    art = "Unknown Artist"
+    tit = nm
 
-    # [클래식 분기]
-    if top_folder == "클래식":
-        # 1. 아티스트(작곡가): 폴더명(클래식/작곡가/...)을 최우선 신뢰
-        art = path_parts[1] if len(path_parts) > 1 else "Classical"
-
-        # 2. 파일명 정제 (앞의 기호 및 숫자 제거)
-        clean_nm = re.sub(r'^[0-9\s\.\-_/]+', '', nm).strip()
-
-        # 3. 곡 제목 추출: " - " 가 있으면 맨 앞부분만 곡 제목으로 (뒷부분 악장 정보 제외)
-        if " - " in clean_nm:
-            tit = clean_nm.split(" - ")[0].strip()
+    if top_folder == "일본":
+        # 기존: art = path_parts[3] -> path_parts 길이에 따라 유연하게 변경
+        # 예: 일본/가수/아티스트/앨범/곡.mp3
+        if len(path_parts) >= 4:
+            art = path_parts[2]  # 가수/아티스트명
+            album = path_parts[3]  # 앨범명
         else:
-            tit = clean_nm
+            art = path_parts[1] if len(path_parts) > 1 else "Unknown"
 
-        # 제목이 너무 짧으면 전체 파일명을 제목으로 사용
-        if len(tit) < 5: tit = clean_nm
-
-    # [그 외 폴더 분기]
+        # 파일명에서 불필요한 번호 제거 후 제목으로 사용
+        tit = re.sub(r'^\d+\.?\s*', '', nm).strip()
     else:
-        if " - " in nm:
-            parts = nm.split(" - ", 1)
-            art = parts[0].split(". ", 1)[-1].strip() if ". " in parts[0] else parts[0].strip()
-            tit = parts[1].strip()
+        # [클래식 분기]
+        if top_folder == "클래식":
+            # 1. 아티스트(작곡가): 폴더명(클래식/작곡가/...)을 최우선 신뢰
+            art = path_parts[1] if len(path_parts) > 1 else "Classical"
 
-        if top_folder == "OST" or "OST" in top_folder:
-            if art.upper().startswith("CD") or art.isdigit(): art = os.path.basename(d)
-            if len(tit) < 2: tit = nm
-        elif top_folder == "외국":
-            if art == "Unknown Artist" or art.upper().startswith("CD"):
-                art = path_parts[1] if len(path_parts) > 1 else "Pop"
-        elif top_folder == "국내":
-            if art == "Unknown Artist" or art.upper().startswith("CD"):
-                if len(path_parts) >= 3 and path_parts[1] == "가수":
-                    art = path_parts[3] if len(path_parts) > 3 else path_parts[2]
-                else:
-                    art = os.path.basename(d)
+            # 2. 파일명 정제 (앞의 기호 및 숫자 제거)
+            clean_nm = re.sub(r'^[0-9\s\.\-_/]+', '', nm).strip()
+
+            # 3. 곡 제목 추출: " - " 가 있으면 맨 앞부분만 곡 제목으로 (뒷부분 악장 정보 제외)
+            if " - " in clean_nm:
+                tit = clean_nm.split(" - ")[0].strip()
+            else:
+                tit = clean_nm
+
+            # 제목이 너무 짧으면 전체 파일명을 제목으로 사용
+            if len(tit) < 5: tit = clean_nm
+
+        # [그 외 폴더 분기]
+        else:
+            if " - " in nm:
+                parts = nm.split(" - ", 1)
+                art = parts[0].split(". ", 1)[-1].strip() if ". " in parts[0] else parts[0].strip()
+                tit = parts[1].strip()
+
+            if top_folder == "OST" or "OST" in top_folder:
+                if art.upper().startswith("CD") or art.isdigit(): art = os.path.basename(d)
+                if len(tit) < 2: tit = nm
+            elif top_folder == "외국":
+                if art == "Unknown Artist" or art.upper().startswith("CD"):
+                    art = path_parts[1] if len(path_parts) > 1 else "Pop"
+            elif top_folder == "국내":
+                if art == "Unknown Artist" or art.upper().startswith("CD"):
+                    if len(path_parts) >= 3 and path_parts[1] == "가수":
+                        art = path_parts[3] if len(path_parts) > 3 else path_parts[2]
+                    else:
+                        art = os.path.basename(d)
 
     rel_file = os.path.join(rel_dir, f)
     stream_url = f"{BASE_URL}/stream/{urllib.parse.quote(rel_file)}"
     return (tit, art, os.path.basename(d), stream_url, rel_dir)
-
 
 def fix_unknown_artists_in_db(target_tag=None):
     print(f"[*] 🛠️ DB 내 Unknown Artist 복구 시작... (대상: {target_tag if target_tag else '전체'})")
@@ -941,8 +952,14 @@ def clean_query_text(text, is_artist=False, folder_mode="western"):
     if not text or text == 'Unknown Artist': return ""
     s = str(text)
 
+
+    # [수정] 일본어 모드 처리 추가
+    if folder_mode == "japanese":
+        # 일본어(가타카나, 히라가나, 한자)와 영어/숫자만 보존
+        s = re.sub(r'[^\w\s가-힣ぁ-んァ-ヶー一-龠a-zA-Z0-9]', ' ', s)
+
     # [1] 클래식 전용 정제
-    if folder_mode == "classical":
+    elif folder_mode == "classical":
         if not is_artist:
             # 1. 조성(Key) 정보의 다국어 나열 제거 (sol maggiore G-Dur 등)
             s = re.sub(r'(?i)\b(sol|maggiore|majeur|Dur|moll|flat|sharp|major|minor)\b', ' ', s)
@@ -958,7 +975,7 @@ def clean_query_text(text, is_artist=False, folder_mode="western"):
             s = re.sub(r'(?i)(violin|piano|cello|conducted|orch\.|ensemble|philharmonic).*$', '', s)
 
     # [2] 서구권/클래식 공통 (기존 유지)
-    if folder_mode in ["western", "classical"]:
+    elif folder_mode in ["western", "classical"]:
         s = re.sub(r'(?i)TOTP[\s\-_]?\d{4}[\s\-_]?\d{2}', ' ', s)
         s = re.sub(r'(?i)\b(CD|Track|Part|Disc|Side|Vol|Volume|Selection)\s?\d+\b', ' ', s)
         if is_artist:
@@ -980,27 +997,31 @@ def clean_query_text(text, is_artist=False, folder_mode="western"):
 
 
 def fetch_metadata_smart(artist, album, title, folder_type=None):
-    strategy = META_STRATEGIES.get(folder_type, {"priority": ["deezer"], "clean": "western"})
-    clean_mode = strategy["clean"]
+    strategy = META_STRATEGIES.get(folder_type, {"priority": ["itunes", "deezer"], "clean": "western"})
+    clean_mode = "japanese" if folder_type == "일본" else strategy["clean"]
 
     q_art = clean_query_text(artist, is_artist=True, folder_mode=clean_mode)
     q_tit = clean_query_text(title, is_artist=False, folder_mode=clean_mode)
     q_alb = clean_query_text(album, is_artist=False, folder_mode=clean_mode)
 
-    if not q_art and not q_tit: return None
-
     strategies = []
-    if folder_type == "클래식":
-        # 1. 작곡가 + 곡명 (표준)
-        strategies.append((q_art, q_tit))
-        # 2. 곡명만 (제목에 모든 정보가 있을 때 - 클래식에서 매우 강력함)
-        if len(q_tit) > 10:
-            strategies.append(("", q_tit))
-        # 3. 작곡가 + 앨범명
-        strategies.append((q_art, q_alb))
-    elif folder_type == "국내":
-        if q_art and q_tit: strategies.append((q_art, q_tit))
+
+    if folder_type == "일본":
+        # 일본 음악은 앨범명 검색이 최우선
+        if q_alb: strategies.append(("", q_alb))
         if q_art and q_alb: strategies.append((q_art, q_alb))
+        if q_art and q_tit: strategies.append((q_art, q_tit))
+
+    elif folder_type == "클래식":
+        # 클래식은 개별 곡보다는 앨범(앨범 아트가 같음)으로 검색하는 게 훨씬 정확
+        if album:
+            strategies.append(("", album))  # 앨범명만 검색
+        if q_art and album:
+            strategies.append((q_art, album))  # 아티스트 + 앨범명
+        # 제목(곡명)은 최후의 수단으로
+        if q_tit:
+            strategies.append(("", q_tit))
+
     else:
         if q_art and q_tit: strategies.append((q_art, q_tit))
         if q_art and q_alb: strategies.append((q_art, q_alb))
@@ -1008,10 +1029,11 @@ def fetch_metadata_smart(artist, album, title, folder_type=None):
     for a_q, b_q in strategies:
         for engine in strategy["priority"]:
             res = None
-            if engine == "deezer": res = fetch_deezer_metadata(a_q, b_q)
-            elif engine == "itunes": res = fetch_itunes_metadata(a_q, b_q)
-            elif engine == "maniadb": res = fetch_maniadb_metadata(a_q, b_q)
-            if res: return res
+            if engine == "deezer":
+                res = fetch_deezer_metadata(a_q, b_q)
+            elif engine == "itunes":
+                res = fetch_itunes_metadata(a_q, b_q)
+            if res and res.get('poster'): return res
         time.sleep(0.1)
     return None
 
