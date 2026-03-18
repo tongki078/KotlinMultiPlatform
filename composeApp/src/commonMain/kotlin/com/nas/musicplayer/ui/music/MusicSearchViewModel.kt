@@ -29,14 +29,6 @@ data class Theme(
 )
 
 @Serializable
-data class ThemeResponse(
-    val charts: List<Theme>,
-    val collections: List<Theme>,
-    val artists: List<Theme> = emptyList(),
-    val genres: List<Theme> = emptyList()
-)
-
-@Serializable
 data class IntegratedSearchResponse(
     val artists: List<NetworkArtist> = emptyList(),
     val albums: List<Album> = emptyList(),
@@ -77,6 +69,7 @@ class MusicSearchViewModel(val repository: MusicRepository) : ViewModel() {
     private var artistPage = 1
     private var isLastPage = false
     private var isPagingLoading = false
+    private var isTop100Loading = false
 
     init {
         loadMainData()
@@ -96,27 +89,48 @@ class MusicSearchViewModel(val repository: MusicRepository) : ViewModel() {
 
     fun getApiService(): MusicApiService = musicApiService
 
+    // [수정] 메인 화면: 모든 테마 섹션(차트, 모음, 가수, 장르) 로딩 복구
     fun loadMainData() {
         viewModelScope.launch {
+            if (_uiState.value.themes.isNotEmpty()) return@launch
+            
             _uiState.update { it.copy(isLoading = true) }
             try {
-                // 병렬 실행으로 응답 속도 최적화
-                val themeDeferred = async { httpClient.get("$pythonBaseUrl/api/themes").body<ThemeResponse>() }
-                val top100Deferred = async { musicApiService.getTop100() }
-                
-                val themeRes = themeDeferred.await()
-                val top100Res = top100Deferred.await()
+                // 병렬로 카테고리별 테마 로드
+                val chartsDef = async { httpClient.get("$pythonBaseUrl/api/themes/charts?page=1").body<List<Theme>>() }
+                val collectionsDef = async { httpClient.get("$pythonBaseUrl/api/themes/collections?page=1").body<List<Theme>>() }
+                val artistsDef = async { httpClient.get("$pythonBaseUrl/api/themes/artists?page=1").body<List<Theme>>() }
+                val genresDef = async { httpClient.get("$pythonBaseUrl/api/themes/genres?page=1").body<List<Theme>>() }
                 
                 _uiState.update { it.copy(
-                    themes = themeRes.charts,
-                    collectionThemes = themeRes.collections,
-                    artistThemes = themeRes.artists,
-                    genreThemes = themeRes.genres,
-                    top100Songs = top100Res.map { cleanSongInfo(it) },
+                    themes = chartsDef.await(),
+                    collectionThemes = collectionsDef.await(),
+                    artistThemes = artistsDef.await(),
+                    genreThemes = genresDef.await(),
                     isLoading = false
                 ) }
+
+                // Top 100 로드
+                loadTop100()
+                
             } catch (e: Exception) {
+                println("loadMainData Error: ${e.message}")
                 _uiState.update { it.copy(isLoading = false) }
+            }
+        }
+    }
+    
+    fun loadTop100() {
+        if (isTop100Loading) return
+        isTop100Loading = true
+        viewModelScope.launch {
+            try {
+                val songs = httpClient.get("$pythonBaseUrl/api/top100").body<List<Song>>()
+                _uiState.update { it.copy(top100Songs = songs.map { s -> cleanSongInfo(s) }) }
+            } catch (e: Exception) {
+                println("Error loading Top 100: ${e.message}")
+            } finally {
+                isTop100Loading = false
             }
         }
     }
@@ -230,7 +244,7 @@ class MusicSearchViewModel(val repository: MusicRepository) : ViewModel() {
     private fun generateMatchKey(artist: String, title: String): String = "${artist.replace(Regex("[^a-zA-Z0-9가-힣]"), "").lowercase()}-${title.replace(Regex("[^a-zA-Z0-9가-힣]"), "").lowercase()}"
     fun startDownloading(id: Long) { _uiState.update { it.copy(downloadingSongIds = it.downloadingSongIds + id) } }
     fun stopDownloading(id: Long) { _uiState.update { it.copy(downloadingSongIds = it.downloadingSongIds - id) } }
-    
+
     fun deleteRecentSearch(q: String) { viewModelScope.launch { repository.deleteRecentSearch(q) } }
     fun clearAllRecentSearches() { viewModelScope.launch { repository.clearAllRecentSearches() } }
 

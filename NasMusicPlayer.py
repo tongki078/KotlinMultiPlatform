@@ -1470,20 +1470,31 @@ def start_meta():
 
 
 @app.route('/api/themes')
-def get_themes(): return jsonify(cache)
+def get_themes():
+    # 전체를 보내지 말고 핵심 정보(이미지 URL 등)만 요약해서 보냄
+    return jsonify({
+        "charts": [{"name": c["name"], "path": c["path"], "image_url": c["image_url"]} for c in cache["charts"]],
+        "collections": [{"name": c["name"], "path": c["path"], "image_url": c["image_url"]} for c in cache["collections"]],
+        "artists": [{"name": c["name"], "path": c["path"], "image_url": c["image_url"]} for c in cache["artists"]],
+        "genres": [{"name": c["name"], "path": c["path"], "image_url": c["image_url"]} for c in cache["genres"]]
+    })
 
 
 @app.route('/api/theme-details/<path:tp>')
 def get_details(tp):
     p = urllib.parse.unquote(tp)
+    page = int(request.args.get('page', 1))  # 페이지 파라미터 추가
+    limit = 100  # 한 번에 100개씩만
+    offset = (page - 1) * limit
+
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
-        # rowid AS id 추가 및 인덱스 활용을 위해 쿼리 최적화
+        # LIMIT과 OFFSET 추가 (가장 중요)
         rows = conn.execute(
             """SELECT rowid AS id, name, artist, albumName, stream_url, parent_path, meta_poster
                FROM global_songs WHERE parent_path LIKE ?
-               ORDER BY artist, name ASC LIMIT 500""",
-            (f"{p}%",)
+               ORDER BY artist, name ASC LIMIT ? OFFSET ?""",
+            (f"{p}%", limit, offset)
         ).fetchall()
         return jsonify([dict(r) for r in rows])
 
@@ -1513,8 +1524,7 @@ def get_top100():
 
             # 3. 추출된 최신 경로에 속한 곡들만 모두 가져옴
             rows = conn.execute(
-                """SELECT rowid AS id, name, artist, albumName, stream_url, parent_path, meta_poster,
-                          genre, release_date, album_artist, 0 as is_dir
+                """SELECT rowid AS id, name, artist, albumName, meta_poster, genre, album_artist
                    FROM global_songs
                    WHERE parent_path = ?""",
                 (latest_path,)
@@ -1706,25 +1716,23 @@ def search_integrated():
 
 @app.route('/api/library/artists/<folder_type>')
 def get_library_artists(folder_type):
+    page = int(request.args.get('page', 1))
+    limit = 60
+    offset = (page - 1) * limit
     try:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
-            # 아티스트명 앞뒤 공백 제거 및 대문자 통일 후 그룹화하여 중복 제거
             rows = conn.execute(
                 """SELECT TRIM(artist) as clean_artist, MAX(meta_poster) as cover
                    FROM global_songs
                    WHERE parent_path LIKE ?
-                   AND artist IS NOT NULL
-                   AND artist != ''
-                   AND artist != 'Unknown Artist'
                    GROUP BY UPPER(TRIM(artist))
-                   ORDER BY clean_artist ASC""",
-                (f"{folder_type}%",)
+                   ORDER BY clean_artist ASC
+                   LIMIT ? OFFSET ?""",
+                (f"{folder_type}%", limit, offset)
             ).fetchall()
-
             return jsonify([{"name": r['clean_artist'], "cover": r['cover']} for r in rows])
     except Exception as e:
-        print(f"[!] 에러: {e}")
         return jsonify([])
 
 # 2. 특정 가수의 앨범 목록 조회 (애플뮤직 스타일 1단계)

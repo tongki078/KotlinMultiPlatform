@@ -13,9 +13,11 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -51,18 +53,25 @@ actual class MusicPlayerController(private val context: Context) {
     init {
         initializeController()
         
-        // 가사 싱크를 위해 16ms(60fps) 주기로 위치 추적
+        // 가사 싱크를 위해 200ms 주기로 위치 추적 (리소스 부하 감소)
         coroutineScope.launch {
-            while (true) {
+            while (isActive) {
                 player?.let { p ->
                     if (p.isPlaying) {
                         _currentPosition.value = p.currentPosition
                         _duration.value = p.duration
                     }
                 }
-                delay(16) 
+                delay(200) 
             }
         }
+    }
+
+    fun release() {
+        coroutineScope.cancel()
+        loudnessEnhancer?.release()
+        player?.release()
+        controllerFuture?.cancel(true)
     }
 
     private fun initializeController() {
@@ -99,8 +108,6 @@ actual class MusicPlayerController(private val context: Context) {
             loudnessEnhancer?.release()
             if (sessionId != 0) {
                 loudnessEnhancer = LoudnessEnhancer(sessionId).apply {
-                    // 소리 증폭 값을 대폭 상향 (10000 -> 30000: 30dB 증폭)
-                    // 에뮬레이터의 작은 소리를 확실하게 보강합니다.
                     setTargetGain(30000)
                     enabled = true
                 }
@@ -115,7 +122,6 @@ actual class MusicPlayerController(private val context: Context) {
         
         Log.d("MusicPlayerController", "Requested Song streamUrl: ${song.streamUrl}, Playlist Size: ${playlist.size}")
         
-        // ID 대신 고유값인 streamUrl로 인덱스를 찾도록 변경
         val indexInList = playlist.indexOfFirst { it.streamUrl == song.streamUrl }
         val startIndex = if (indexInList != -1) indexInList else 0
         Log.d("MusicPlayerController", "Starting at index: $startIndex")

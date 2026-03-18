@@ -6,6 +6,7 @@ import com.nas.musicplayer.db.PlaylistEntity
 import com.nas.musicplayer.db.RecentSearch
 import com.nas.musicplayer.db.RecentSearchDao
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 
 class MusicRepository(
@@ -16,9 +17,8 @@ class MusicRepository(
     val allPlaylists: Flow<List<PlaylistEntity>> = playlistDao.getAllPlaylists()
     val recentSearches: Flow<List<RecentSearch>> = recentSearchDao.getRecentSearches()
 
-    val allSongs: Flow<List<Song>> = allPlaylists.map { playlists ->
-        playlists.flatMap { it.songs }.distinctBy { it.id }
-    }
+    // [수정] 메모리 과부하 방지를 위해 전체 곡 리스트 로딩을 비활성화 (Flow 연산자 제거)
+    val allSongs: Flow<List<Song>> = flowOf(emptyList())
 
     suspend fun createPlaylist(name: String): Long {
         val newPlaylist = PlaylistEntity(name = name, songs = emptyList())

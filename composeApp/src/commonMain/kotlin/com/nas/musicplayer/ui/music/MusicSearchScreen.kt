@@ -71,13 +71,21 @@ fun MusicSearchScreen(
 
     LaunchedEffect(Unit) {
         focusManager.clearFocus()
+        if (uiState.themes.isEmpty()) {
+            viewModel.loadMainData()
+        }
     }
 
     val infiniteTransition = rememberInfiniteTransition()
-    val micAlpha by infiniteTransition.animateFloat(
-        initialValue = 1f, targetValue = 0.3f,
-        animationSpec = infiniteRepeatable(animation = tween(600, easing = LinearEasing), repeatMode = RepeatMode.Reverse)
-    )
+    // [수정] 애니메이션을 로딩/검색 상태에 의존적으로 만들어 메모리 누수 방지
+    val micAlpha = if (isVoiceSearching) {
+        infiniteTransition.animateFloat(
+            initialValue = 1f, targetValue = 0.3f,
+            animationSpec = infiniteRepeatable(animation = tween(600, easing = LinearEasing), repeatMode = RepeatMode.Reverse)
+        ).value
+    } else {
+        1f
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().statusBarsPadding().padding(bottom = bottomPadding).imePadding()
@@ -99,7 +107,7 @@ fun MusicSearchScreen(
                         }
                         IconButton(onClick = onVoiceSearchClick) {
                             Icon(Icons.Default.Mic, null, tint = if (isVoiceSearching) Color.Red else primaryColor,
-                                modifier = Modifier.graphicsLayer { alpha = if (isVoiceSearching) micAlpha else 1f })
+                                modifier = Modifier.graphicsLayer { alpha = micAlpha })
                         }
                     }
                 },
@@ -124,7 +132,7 @@ fun MusicSearchScreen(
         }
 
         Box(modifier = Modifier.weight(1f)) {
-            if (uiState.isLoading) {
+            if (uiState.isLoading && uiState.themes.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
